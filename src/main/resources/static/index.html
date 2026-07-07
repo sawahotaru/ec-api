@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EC Demo Shop</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛍️</text></svg>">
+</head>
+<body>
+<header class="topbar">
+    <div class="brand" id="brand">🛍️ EC Demo Shop</div>
+    <div class="search">
+        <input id="search" type="search" placeholder="商品名で検索…" autocomplete="off">
+        <select id="category"><option value="">全カテゴリ</option></select>
+    </div>
+    <div class="account">
+        <span id="userLabel" class="user-label hidden"></span>
+        <button id="ordersBtn" class="btn ghost hidden">注文履歴</button>
+        <button id="cartBtn" class="btn ghost">🛒 <span id="cartCount">0</span></button>
+        <button id="authBtn" class="btn">ログイン</button>
+        <button id="logoutBtn" class="btn ghost hidden">ログアウト</button>
+    </div>
+</header>
+
+<main>
+    <div id="banner" class="banner hidden"></div>
+    <section id="grid" class="grid" aria-live="polite"></section>
+    <div id="emptyState" class="empty hidden">該当する商品がありません。</div>
+</main>
+
+<!-- Cart drawer -->
+<aside id="cartDrawer" class="drawer hidden" aria-label="カート">
+    <div class="drawer-head">
+        <h2>カート</h2>
+        <button class="btn ghost" data-close="cart">✕</button>
+    </div>
+    <div id="cartItems" class="drawer-body"></div>
+    <div class="drawer-foot">
+        <div class="total-row"><span>合計</span><strong id="cartTotal">¥0</strong></div>
+        <button id="checkoutBtn" class="btn wide" disabled>注文を確定する</button>
+    </div>
+</aside>
+
+<!-- Orders drawer -->
+<aside id="ordersDrawer" class="drawer hidden" aria-label="注文履歴">
+    <div class="drawer-head">
+        <h2>注文履歴</h2>
+        <button class="btn ghost" data-close="orders">✕</button>
+    </div>
+    <div id="ordersBody" class="drawer-body"></div>
+</aside>
+
+<div id="scrim" class="scrim hidden"></div>
+
+<!-- Auth modal -->
+<div id="authModal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+        <div class="tabs">
+            <button class="tab active" data-tab="login">ログイン</button>
+            <button class="tab" data-tab="register">新規登録</button>
+        </div>
+        <form id="authForm">
+            <label id="nameField" class="field hidden">
+                <span>お名前</span>
+                <input id="f-name" type="text" autocomplete="name">
+            </label>
+            <label class="field">
+                <span>メールアドレス</span>
+                <input id="f-email" type="email" required autocomplete="email">
+            </label>
+            <label class="field">
+                <span>パスワード</span>
+                <input id="f-password" type="password" required minlength="6" autocomplete="current-password">
+            </label>
+            <p id="authError" class="error hidden"></p>
+            <button type="submit" class="btn wide" id="authSubmit">ログイン</button>
+            <p class="hint">デモ: <code>user@example.com</code> / <code>user1234</code></p>
+        </form>
+        <button class="btn ghost close-x" data-close="auth">✕</button>
+    </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="js/app.js"></script>
+</body>
+</html>

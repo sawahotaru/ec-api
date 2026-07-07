@@ -1,0 +1,37 @@
+# Local dev: Spring Boot API + PostgreSQL, mirroring the Render setup.
+# Usage: docker compose up --build   ->   http://localhost:8080/swagger-ui.html
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ecapi
+      POSTGRES_USER: ecapi
+      POSTGRES_PASSWORD: ecapi
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ecapi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/ecapi
+      SPRING_DATASOURCE_USERNAME: ecapi
+      SPRING_DATASOURCE_PASSWORD: ecapi
+      APP_JWT_SECRET: local-dev-secret-please-change-me-32bytes-minimum
+      APP_SEED_ENABLED: "true"
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:
