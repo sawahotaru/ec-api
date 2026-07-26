@@ -1,6 +1,7 @@
 package com.example.ecapi.dto;
 
 import com.example.ecapi.domain.Product;
+import com.example.ecapi.domain.TaxCategory;
 import com.example.ecapi.dto.CategoryDtos.CategoryResponse;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
@@ -20,7 +21,9 @@ public final class ProductDtos {
             @NotNull @DecimalMin(value = "0.0", inclusive = true) BigDecimal price,
             @PositiveOrZero int stock,
             String imageUrl,
-            Long categoryId) {
+            Long categoryId,
+            // null → STANDARD（標準税率）。REDUCED で軽減税率。
+            TaxCategory taxCategory) {
     }
 
     public record ProductResponse(
@@ -32,6 +35,7 @@ public final class ProductDtos {
             // Sellable right now: stock minus units held for unpaid (pending) orders.
             int available,
             String imageUrl,
+            String taxCategory,
             CategoryResponse category,
             Instant createdAt) {
 
@@ -44,6 +48,7 @@ public final class ProductDtos {
                     product.getStock(),
                     product.getAvailable(),
                     product.getImageUrl(),
+                    product.getTaxCategory().name(),
                     CategoryResponse.from(product.getCategory()),
                     product.getCreatedAt());
         }

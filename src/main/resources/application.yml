@@ -37,6 +37,12 @@ app:
     # sweep expires the order and releases the hold back to sellable stock.
     hold-minutes: ${APP_ORDER_HOLD_MINUTES:30}
     expiry-sweep-ms: ${APP_ORDER_EXPIRY_SWEEP_MS:60000}
+  tax:
+    # INCLUSIVE=内税(price は税込・総額表示) / EXCLUSIVE=外税(price は税抜・税を加算)。
+    # 現在は内税を運用。税率は effective-dated な tax_rates テーブルで管理し、注文時に凍結する。
+    pricing-mode: ${APP_TAX_PRICING_MODE:INCLUSIVE}
+    # 端数処理: FLOOR=切り捨て(JP小売で一般的) / HALF_UP=四捨五入 / CEILING=切り上げ。
+    rounding: ${APP_TAX_ROUNDING:FLOOR}
   stripe:
     # TEST MODE ONLY. Leave blank to disable payments (app still boots).
     # Set sk_test_... and whsec_... in production env (never commit real keys).

@@ -146,6 +146,11 @@ main { max-width: 1140px; margin: 0 auto; padding: 22px 20px 80px; }
 .guest-choice { display: flex; flex-direction: column; gap: 8px; margin-bottom: 6px; }
 .guest-choice .hint { margin: 0 0 2px; }
 .guest-choice .btn.wide { margin: 0; }
+/* Tax display */
+.tax-note { font-size: .6em; color: var(--muted); font-weight: 600; margin-left: 4px; }
+.tax-breakdown { margin: 10px 0; font-size: 13px; }
+.tax-breakdown > div { display: flex; justify-content: space-between; padding: 2px 0; color: var(--muted); }
+.tax-breakdown .tb-total { color: var(--ink); font-weight: 700; border-top: 1px solid var(--line); margin-top: 4px; padding-top: 6px; }
 .linklike { display: block; width: 100%; margin-top: 8px; background: none; border: none; color: var(--muted); font-size: 12px; cursor: pointer; text-decoration: underline; }
 .linklike:hover { color: var(--ink); }
 .total-row strong { font-size: 20px; }

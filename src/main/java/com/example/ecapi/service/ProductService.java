@@ -2,6 +2,7 @@ package com.example.ecapi.service;
 
 import com.example.ecapi.domain.Category;
 import com.example.ecapi.domain.Product;
+import com.example.ecapi.domain.TaxCategory;
 import com.example.ecapi.dto.ProductDtos.ProductRequest;
 import com.example.ecapi.exception.NotFoundException;
 import com.example.ecapi.repository.CategoryRepository;
@@ -61,6 +62,7 @@ public class ProductService {
         product.setPrice(request.price());
         product.setStock(request.stock());
         product.setImageUrl(request.imageUrl());
+        product.setTaxCategory(request.taxCategory() != null ? request.taxCategory() : TaxCategory.STANDARD);
         if (request.categoryId() != null) {
             Category category = categoryRepository.findById(request.categoryId())
                     .orElseThrow(() -> new NotFoundException("Category not found: " + request.categoryId()));

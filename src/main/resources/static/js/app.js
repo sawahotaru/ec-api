@@ -21,7 +21,15 @@ const state = {
     productsById: {},
     // For guests at checkout: 'choice' shows 会員/ゲスト の選択、'guest' shows the guest email form.
     guestMode: "choice",
+    // Tax display: pricing mode (INCLUSIVE=内税/EXCLUSIVE=外税) from /api/tax/config.
+    taxMode: "INCLUSIVE",
 };
+
+// Suffix shown after prices, e.g. 「（税込）」. Prices in the catalog are tax-included
+// in INCLUSIVE mode, tax-exclusive in EXCLUSIVE mode.
+function taxSuffix() {
+    return state.taxMode === "EXCLUSIVE" ? "（税抜）" : "（税込）";
+}
 
 async function api(path, { method = "GET", body, auth = false } = {}) {
     const headers = {};
@@ -182,7 +190,7 @@ function renderDetail(p) {
                 <div class="cat">${p.category ? escapeHtml(p.category.name) : ""}</div>
                 <h1 class="detail-name">${escapeHtml(p.name)}</h1>
                 <p class="detail-desc">${escapeHtml(p.description || "")}</p>
-                <div class="detail-price">${yen(p.price)}</div>
+                <div class="detail-price">${yen(p.price)}<span class="tax-note">${taxSuffix()}</span></div>
                 <div class="detail-stock ${out ? "out" : ""}">${out ? "在庫切れ" : "在庫 " + avail}</div>
                 <button class="btn wide add-btn" data-id="${p.id}" ${out ? "disabled" : ""}>カートに入れる</button>
             </div>
@@ -379,7 +387,7 @@ function renderCart(cart) {
             </div>`;
         }).join("");
     }
-    $("#cartTotal").textContent = yen(cart ? cart.totalAmount : 0);
+    $("#cartTotal").textContent = yen(cart ? cart.totalAmount : 0) + taxSuffix();
 
     // Checkout UI has three shapes:
     //   member                     → the normal 「注文を確定する」 button
@@ -456,16 +464,27 @@ function renderOrders(orders) {
             </div>
             <div class="lmeta">${when}</div>
             ${lines}
-            <div class="total-row" style="margin-top:8px"><span>合計</span><strong>${yen(o.totalAmount)}</strong></div>
+            ${taxBreakdownHtml(o)}
             ${payBtn}
         </div>`;
     }).join("");
 }
 
+function taxBreakdownHtml(order) {
+    // subtotal(税抜) + 消費税 + 合計(税込). Fields come from the order snapshot.
+    if (order.subtotalAmount == null || order.taxAmount == null) return "";
+    return `<div class="tax-breakdown">
+        <div><span>小計（税抜）</span><span>${yen(order.subtotalAmount)}</span></div>
+        <div><span>消費税</span><span>${yen(order.taxAmount)}</span></div>
+        <div class="tb-total"><span>合計（税込）</span><span>${yen(order.totalAmount)}</span></div>
+    </div>`;
+}
+
 function showOrderResult(order) {
     const banner = $("#banner");
     const tokenAttr = order.guest && order.orderToken ? ` data-token="${escapeHtml(order.orderToken)}"` : "";
-    let html = `✅ 注文 #${order.id} を受け付けました（${yen(order.totalAmount)}・状態 ${order.status}）。`;
+    let html = `✅ 注文 #${order.id} を受け付けました（状態 ${order.status}）。`;
+    html += taxBreakdownHtml(order);
     if (order.guest && order.orderToken) {
         html += `<div class="hint" style="margin-top:6px">照会・支払い用トークン: <code>${escapeHtml(order.orderToken)}</code><br>ログインなしで注文を追跡できます。大切に保管してください。</div>`;
     }
@@ -570,6 +589,10 @@ async function init() {
             $("#banner").classList.remove("hidden");
         }
     } catch { /* ignore */ }
+    try {
+        const tax = await api("/api/tax/config");
+        state.taxMode = tax.pricingMode || "INCLUSIVE";
+    } catch { /* keep default */ }
     await Promise.all([loadCategories(), loadProducts()]);
     await restoreSession();
     if (!isLoggedIn()) updateCartCount(guestCartView()); // show guest cart badge on load

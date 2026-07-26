@@ -2,6 +2,8 @@ package com.example.ecapi.domain;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -41,6 +43,16 @@ public class Product {
     @Column(nullable = false)
     @ColumnDefault("0")
     private int reserved;
+
+    /**
+     * Which tax-rate schedule applies. The percentage comes from {@link TaxRate}
+     * (effective-dated). Default STANDARD; @ColumnDefault lets ddl-auto add the
+     * column to a non-empty products table in production.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    @ColumnDefault("'STANDARD'")
+    private TaxCategory taxCategory = TaxCategory.STANDARD;
 
     private String imageUrl;
 
@@ -102,6 +114,14 @@ public class Product {
     /** Stock actually available to sell (total minus what is held for pending orders). */
     public int getAvailable() {
         return stock - reserved;
+    }
+
+    public TaxCategory getTaxCategory() {
+        return taxCategory;
+    }
+
+    public void setTaxCategory(TaxCategory taxCategory) {
+        this.taxCategory = taxCategory;
     }
 
     public String getImageUrl() {

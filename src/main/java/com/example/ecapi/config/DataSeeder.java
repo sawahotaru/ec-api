@@ -3,11 +3,15 @@ package com.example.ecapi.config;
 import com.example.ecapi.domain.Category;
 import com.example.ecapi.domain.Product;
 import com.example.ecapi.domain.Role;
+import com.example.ecapi.domain.TaxCategory;
+import com.example.ecapi.domain.TaxRate;
 import com.example.ecapi.domain.User;
 import com.example.ecapi.repository.CategoryRepository;
 import com.example.ecapi.repository.ProductRepository;
+import com.example.ecapi.repository.TaxRateRepository;
 import com.example.ecapi.repository.UserRepository;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -23,6 +27,7 @@ public class DataSeeder implements CommandLineRunner {
     private final UserRepository userRepository;
     private final CategoryRepository categoryRepository;
     private final ProductRepository productRepository;
+    private final TaxRateRepository taxRateRepository;
     private final PasswordEncoder passwordEncoder;
 
     private final boolean seedEnabled;
@@ -32,6 +37,7 @@ public class DataSeeder implements CommandLineRunner {
     public DataSeeder(UserRepository userRepository,
                       CategoryRepository categoryRepository,
                       ProductRepository productRepository,
+                      TaxRateRepository taxRateRepository,
                       PasswordEncoder passwordEncoder,
                       @Value("${app.seed.enabled}") boolean seedEnabled,
                       @Value("${app.seed.admin-email}") String adminEmail,
@@ -39,6 +45,7 @@ public class DataSeeder implements CommandLineRunner {
         this.userRepository = userRepository;
         this.categoryRepository = categoryRepository;
         this.productRepository = productRepository;
+        this.taxRateRepository = taxRateRepository;
         this.passwordEncoder = passwordEncoder;
         this.seedEnabled = seedEnabled;
         this.adminEmail = adminEmail;
@@ -52,9 +59,28 @@ public class DataSeeder implements CommandLineRunner {
         }
         seedAdmin();
         seedDemoUser();
+        seedTaxRates();
         if (categoryRepository.count() == 0 && productRepository.count() == 0) {
             seedCatalog();
         }
+    }
+
+    /** 現行の消費税率: 標準10% / 軽減8%（2019-10-01〜・無期限）。将来の改定は行を追加する。 */
+    private void seedTaxRates() {
+        if (taxRateRepository.count() > 0) {
+            return;
+        }
+        LocalDate since = LocalDate.of(2019, 10, 1);
+        taxRateRepository.save(taxRate(TaxCategory.STANDARD, "10.00", since));
+        taxRateRepository.save(taxRate(TaxCategory.REDUCED, "8.00", since));
+    }
+
+    private TaxRate taxRate(TaxCategory category, String percent, LocalDate from) {
+        TaxRate r = new TaxRate();
+        r.setCategory(category);
+        r.setRatePercent(new BigDecimal(percent));
+        r.setEffectiveFrom(from);
+        return r;
     }
 
     private void seedAdmin() {

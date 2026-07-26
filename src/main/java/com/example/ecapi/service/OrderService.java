@@ -4,7 +4,9 @@ import com.example.ecapi.domain.CartItem;
 import com.example.ecapi.domain.Order;
 import com.example.ecapi.domain.OrderItem;
 import com.example.ecapi.domain.OrderStatus;
+import com.example.ecapi.domain.PricingMode;
 import com.example.ecapi.domain.Product;
+import com.example.ecapi.domain.TaxCategory;
 import com.example.ecapi.domain.User;
 import com.example.ecapi.exception.BadRequestException;
 import com.example.ecapi.exception.NotFoundException;
@@ -12,6 +14,7 @@ import com.example.ecapi.repository.CartItemRepository;
 import com.example.ecapi.repository.OrderRepository;
 import com.example.ecapi.repository.ProductRepository;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -27,13 +30,16 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final CartItemRepository cartItemRepository;
     private final ProductRepository productRepository;
+    private final TaxService taxService;
 
     public OrderService(OrderRepository orderRepository,
                         CartItemRepository cartItemRepository,
-                        ProductRepository productRepository) {
+                        ProductRepository productRepository,
+                        TaxService taxService) {
         this.orderRepository = orderRepository;
         this.cartItemRepository = cartItemRepository;
         this.productRepository = productRepository;
+        this.taxService = taxService;
     }
 
     /**
@@ -93,9 +99,21 @@ public class OrderService {
         return orderRepository.save(order);
     }
 
-    /** Snapshots each line, reserves its stock, and accumulates the order total. */
+    /**
+     * Snapshots each line (price/name AND tax rate/amount), reserves its stock, and
+     * accumulates the order's subtotal / tax / total. The tax rate is resolved from the
+     * effective-dated {@link TaxRate} table for each product's category as of today and
+     * frozen onto the order — a later rate change never rewrites this order.
+     */
     private void buildAndReserve(Order order, Map<Long, Integer> quantities) {
-        BigDecimal total = BigDecimal.ZERO;
+        PricingMode mode = taxService.pricingMode();
+        LocalDate today = LocalDate.now();
+        order.setPricingMode(mode);
+
+        BigDecimal subtotal = BigDecimal.ZERO;  // 税抜合計
+        BigDecimal taxTotal = BigDecimal.ZERO;  // 税額合計
+        BigDecimal total = BigDecimal.ZERO;     // 税込合計（支払額）
+
         for (Map.Entry<Long, Integer> entry : quantities.entrySet()) {
             Long productId = entry.getKey();
             int quantity = entry.getValue();
@@ -113,15 +131,35 @@ public class OrderService {
                         "Not enough stock for '" + product.getName() + "'. Available: " + product.getAvailable());
             }
 
+            TaxCategory category = product.getTaxCategory();
+            BigDecimal rate = taxService.rateFor(category, today);
+
             OrderItem orderItem = new OrderItem();
             orderItem.setProduct(product);
             orderItem.setProductName(product.getName());
             orderItem.setUnitPrice(product.getPrice());
             orderItem.setQuantity(quantity);
+            orderItem.setTaxCategory(category);
+            orderItem.setTaxRatePercent(rate);
+
+            BigDecimal lineListTotal = orderItem.getLineTotal(); // INCLUSIVE=税込 / EXCLUSIVE=税抜
+            BigDecimal lineTax = taxService.taxForLine(lineListTotal, rate);
+            orderItem.setTaxAmount(lineTax);
             order.addItem(orderItem);
 
-            total = total.add(orderItem.getLineTotal());
+            if (mode == PricingMode.INCLUSIVE) {
+                total = total.add(lineListTotal);             // 税込
+                taxTotal = taxTotal.add(lineTax);
+                subtotal = subtotal.add(lineListTotal.subtract(lineTax)); // 税抜
+            } else { // EXCLUSIVE: price は税抜
+                subtotal = subtotal.add(lineListTotal);        // 税抜
+                taxTotal = taxTotal.add(lineTax);
+                total = total.add(lineListTotal.add(lineTax));  // 税込
+            }
         }
+
+        order.setSubtotalAmount(subtotal);
+        order.setTaxAmount(taxTotal);
         order.setTotalAmount(total);
     }
 

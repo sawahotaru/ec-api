@@ -50,8 +50,22 @@ public class Order {
     @Column(nullable = false)
     private OrderStatus status = OrderStatus.PENDING;
 
+    /** 税抜合計（subtotal, tax-exclusive）. Snapshotted at checkout. */
+    @Column(nullable = false, precision = 12, scale = 2)
+    private BigDecimal subtotalAmount = BigDecimal.ZERO;
+
+    /** 消費税額合計. Snapshotted at checkout. */
+    @Column(nullable = false, precision = 12, scale = 2)
+    private BigDecimal taxAmount = BigDecimal.ZERO;
+
+    /** 税込合計（支払総額）= subtotal + tax. */
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal totalAmount = BigDecimal.ZERO;
+
+    /** 内税/外税どちらで計算したか（注文時点をスナップショット）. */
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private PricingMode pricingMode = PricingMode.INCLUSIVE;
 
     /** Stripe Checkout Session id (test mode). Null until a payment is initiated. */
     private String stripeSessionId;
@@ -112,12 +126,36 @@ public class Order {
         this.status = status;
     }
 
+    public BigDecimal getSubtotalAmount() {
+        return subtotalAmount;
+    }
+
+    public void setSubtotalAmount(BigDecimal subtotalAmount) {
+        this.subtotalAmount = subtotalAmount;
+    }
+
+    public BigDecimal getTaxAmount() {
+        return taxAmount;
+    }
+
+    public void setTaxAmount(BigDecimal taxAmount) {
+        this.taxAmount = taxAmount;
+    }
+
     public BigDecimal getTotalAmount() {
         return totalAmount;
     }
 
     public void setTotalAmount(BigDecimal totalAmount) {
         this.totalAmount = totalAmount;
+    }
+
+    public PricingMode getPricingMode() {
+        return pricingMode;
+    }
+
+    public void setPricingMode(PricingMode pricingMode) {
+        this.pricingMode = pricingMode;
     }
 
     public String getStripeSessionId() {

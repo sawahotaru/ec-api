@@ -35,7 +35,11 @@ public final class OrderDtos {
             String productName,
             BigDecimal unitPrice,
             int quantity,
-            BigDecimal lineTotal) {
+            BigDecimal lineTotal,
+            // tax snapshot (fixed at purchase time)
+            String taxCategory,
+            BigDecimal taxRatePercent,
+            BigDecimal taxAmount) {
 
         public static OrderItemResponse from(OrderItem item) {
             return new OrderItemResponse(
@@ -44,7 +48,10 @@ public final class OrderDtos {
                     item.getProductName(),
                     item.getUnitPrice(),
                     item.getQuantity(),
-                    item.getLineTotal());
+                    item.getLineTotal(),
+                    item.getTaxCategory().name(),
+                    item.getTaxRatePercent(),
+                    item.getTaxAmount());
         }
     }
 
@@ -53,7 +60,10 @@ public final class OrderDtos {
             String userEmail,
             boolean guest,
             String status,
+            BigDecimal subtotalAmount,
+            BigDecimal taxAmount,
             BigDecimal totalAmount,
+            String pricingMode,
             List<OrderItemResponse> items,
             Instant createdAt,
             // Only present in the response to a guest checkout — the token the guest uses
@@ -79,7 +89,10 @@ public final class OrderDtos {
                     order.getContactEmail(),
                     isGuest,
                     order.getStatus().name(),
+                    order.getSubtotalAmount(),
+                    order.getTaxAmount(),
                     order.getTotalAmount(),
+                    order.getPricingMode().name(),
                     items,
                     order.getCreatedAt(),
                     includeToken ? order.getOrderToken() : null);
