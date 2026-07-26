@@ -38,7 +38,12 @@
     <div id="cartItems" class="drawer-body"></div>
     <div class="drawer-foot">
         <div class="total-row"><span>合計</span><strong id="cartTotal">¥0</strong></div>
+        <label id="guestEmailField" class="field hidden">
+            <span>メールアドレス（ゲスト購入）</span>
+            <input id="guestEmail" type="email" placeholder="you@example.com" autocomplete="email">
+        </label>
         <button id="checkoutBtn" class="btn wide" disabled>注文を確定する</button>
+        <p id="guestHint" class="hint hidden">ログインなしで購入できます。注文後に照会用トークンを表示します。</p>
     </div>
 </aside>
 

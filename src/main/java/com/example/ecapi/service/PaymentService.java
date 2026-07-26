@@ -9,9 +9,12 @@ import com.example.ecapi.dto.PaymentDtos.CheckoutSessionResponse;
 import com.example.ecapi.exception.BadRequestException;
 import com.example.ecapi.exception.NotFoundException;
 import com.example.ecapi.repository.OrderRepository;
+import com.example.ecapi.repository.ProductRepository;
+import com.stripe.exception.EventDataObjectDeserializationException;
 import com.stripe.exception.SignatureVerificationException;
 import com.stripe.exception.StripeException;
 import com.stripe.model.Event;
+import com.stripe.model.EventDataObjectDeserializer;
 import com.stripe.model.StripeObject;
 import com.stripe.model.checkout.Session;
 import com.stripe.net.RequestOptions;
@@ -40,10 +43,14 @@ public class PaymentService {
             "kmf", "mga", "pyg", "rwf", "ugx", "vuv", "xaf", "xof", "xpf");
 
     private final OrderRepository orderRepository;
+    private final ProductRepository productRepository;
     private final StripeProperties props;
 
-    public PaymentService(OrderRepository orderRepository, StripeProperties props) {
+    public PaymentService(OrderRepository orderRepository,
+                          ProductRepository productRepository,
+                          StripeProperties props) {
         this.orderRepository = orderRepository;
+        this.productRepository = productRepository;
         this.props = props;
     }
 
@@ -57,11 +64,27 @@ public class PaymentService {
 
     @Transactional
     public CheckoutSessionResponse createCheckoutSession(User user, Long orderId) {
+        Order order = orderRepository.findByIdAndUserId(orderId, user.getId())
+                .orElseThrow(() -> new NotFoundException("Order not found: " + orderId));
+        return createSessionFor(order);
+    }
+
+    /** Guest variant: the order token authenticates the request in place of a login. */
+    @Transactional
+    public CheckoutSessionResponse createGuestCheckoutSession(Long orderId, String token) {
+        if (token == null || token.isBlank()) {
+            throw new BadRequestException("Order token is required");
+        }
+        Order order = orderRepository.findByIdAndOrderToken(orderId, token)
+                .orElseThrow(() -> new NotFoundException("Order not found: " + orderId));
+        return createSessionFor(order);
+    }
+
+    private CheckoutSessionResponse createSessionFor(Order order) {
         if (!isEnabled()) {
             throw new BadRequestException("Stripe is not configured. Set STRIPE_SECRET_KEY (test key) to enable payments.");
         }
-        Order order = orderRepository.findByIdAndUserId(orderId, user.getId())
-                .orElseThrow(() -> new NotFoundException("Order not found: " + orderId));
+        Long orderId = order.getId();
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new BadRequestException("Order is not payable (status=" + order.getStatus() + ")");
         }
@@ -110,7 +133,18 @@ public class PaymentService {
         }
 
         if ("checkout.session.completed".equals(event.getType())) {
-            StripeObject object = event.getDataObjectDeserializer().getObject().orElse(null);
+            // getObject() is empty when the event's API version differs from the SDK's
+            // pinned version (Stripe accounts often send a different one). Fall back to
+            // deserializeUnsafe() so a version skew never silently drops a payment.
+            EventDataObjectDeserializer deserializer = event.getDataObjectDeserializer();
+            StripeObject object = deserializer.getObject().orElse(null);
+            if (object == null) {
+                try {
+                    object = deserializer.deserializeUnsafe();
+                } catch (EventDataObjectDeserializationException e) {
+                    log.warn("Could not deserialize checkout.session.completed payload: {}", e.getMessage());
+                }
+            }
             if (object instanceof Session session) {
                 String orderId = session.getMetadata() != null ? session.getMetadata().get("orderId") : null;
                 if (orderId == null) {
@@ -127,10 +161,28 @@ public class PaymentService {
 
     private void markPaid(Long orderId) {
         orderRepository.findById(orderId).ifPresent(order -> {
-            if (order.getStatus() == OrderStatus.PENDING) {
-                order.setStatus(OrderStatus.PAID);
-                orderRepository.save(order);
-                log.info("Order {} marked PAID via Stripe webhook", orderId);
+            switch (order.getStatus()) {
+                case PENDING -> {
+                    // Convert each hold into a real stock decrement. The PENDING guard
+                    // above makes this idempotent against duplicate webhook deliveries.
+                    for (OrderItem item : order.getItems()) {
+                        productRepository.commitStock(item.getProduct().getId(), item.getQuantity());
+                    }
+                    order.setStatus(OrderStatus.PAID);
+                    orderRepository.save(order);
+                    log.info("Order {} marked PAID via Stripe webhook (stock committed)", orderId);
+                }
+                case EXPIRED -> {
+                    // The hold timed out and stock was already released before payment
+                    // landed. Honor the payment but leave stock alone (re-committing could
+                    // oversell); flag it for manual reconciliation.
+                    order.setStatus(OrderStatus.PAID);
+                    orderRepository.save(order);
+                    log.warn("Order {} was EXPIRED when payment arrived — marked PAID WITHOUT "
+                            + "stock decrement. Manual stock reconciliation may be needed.", orderId);
+                }
+                default -> log.info("Order {} already {} — ignoring duplicate webhook",
+                        orderId, order.getStatus());
             }
         });
     }

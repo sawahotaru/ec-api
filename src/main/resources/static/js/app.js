@@ -18,6 +18,7 @@ const state = {
     paymentsEnabled: false,
     categories: [],
     lastOrder: null,
+    productsById: {},
 };
 
 async function api(path, { method = "GET", body, auth = false } = {}) {
@@ -42,6 +43,40 @@ function toast(msg) {
     toast._t = setTimeout(() => t.classList.add("hidden"), 2600);
 }
 
+/* ---------- guest cart (localStorage; used only when NOT logged in) ----------
+   Logged-in users have a server-side cart; guests have no account, so we keep
+   their picks client-side and pass them inline to /api/orders/guest-checkout. */
+const GUEST_CART_KEY = "ec_guest_cart";
+const GUEST_ORDERS_KEY = "ec_guest_orders";
+
+function guestCart() {
+    try { return JSON.parse(localStorage.getItem(GUEST_CART_KEY)) || []; }
+    catch { return []; }
+}
+function saveGuestCart(items) { localStorage.setItem(GUEST_CART_KEY, JSON.stringify(items)); }
+
+// Shape the guest cart like a server CartResponse so renderCart() is shared.
+function guestCartView() {
+    const items = guestCart().map((it) => ({
+        product: { id: it.productId, name: it.name, price: it.price, imageUrl: it.imageUrl },
+        quantity: it.quantity,
+        lineTotal: it.price * it.quantity,
+    }));
+    return {
+        items,
+        totalQuantity: items.reduce((s, i) => s + i.quantity, 0),
+        totalAmount: items.reduce((s, i) => s + i.lineTotal, 0),
+    };
+}
+
+function rememberGuestOrder(order) {
+    if (!order || !order.orderToken) return;
+    let list;
+    try { list = JSON.parse(localStorage.getItem(GUEST_ORDERS_KEY)) || []; } catch { list = []; }
+    list.unshift({ id: order.id, token: order.orderToken, total: order.totalAmount, at: order.createdAt });
+    localStorage.setItem(GUEST_ORDERS_KEY, JSON.stringify(list.slice(0, 20)));
+}
+
 /* ---------- products ---------- */
 let searchTimer;
 async function loadProducts() {
@@ -56,9 +91,14 @@ async function loadProducts() {
 
 function renderProducts(products) {
     const grid = $("#grid");
+    state.productsById = {};
+    products.forEach((p) => { state.productsById[p.id] = p; });
     $("#emptyState").classList.toggle("hidden", products.length > 0);
     grid.innerHTML = products.map((p) => {
-        const out = p.stock <= 0;
+        // "available" (= stock − reserved) is what can actually be sold right now.
+        // Fall back to stock for older API responses that lack the field.
+        const avail = (p.available != null) ? p.available : p.stock;
+        const out = avail <= 0;
         const img = p.imageUrl ? `background-image:url('${p.imageUrl}')` : "";
         return `
         <article class="card">
@@ -69,7 +109,7 @@ function renderProducts(products) {
                 <div class="desc">${escapeHtml(p.description || "")}</div>
                 <div class="row">
                     <span class="price">${yen(p.price)}</span>
-                    <span class="stock ${out ? "out" : ""}">${out ? "在庫切れ" : "在庫 " + p.stock}</span>
+                    <span class="stock ${out ? "out" : ""}">${out ? "在庫切れ" : "在庫 " + avail}</span>
                 </div>
                 <button class="btn wide add-btn" data-id="${p.id}" ${out ? "disabled" : ""}>カートに入れる</button>
             </div>
@@ -134,6 +174,7 @@ async function submitAuth(e) {
         localStorage.setItem("ec_token", res.token);
         closeAuth();
         reflectAuth();
+        await mergeGuestCartIfAny();
         await refreshCart();
         toast(`ようこそ、${res.user.name} さん`);
     } catch (ex) {
@@ -147,9 +188,22 @@ function logout() {
     state.user = null;
     localStorage.removeItem("ec_token");
     reflectAuth();
-    updateCartCount({ totalQuantity: 0 });
+    updateCartCount(guestCartView()); // fall back to the guest cart badge
     closeDrawers();
     toast("ログアウトしました");
+}
+
+// When a guest logs in, carry their client-side cart into the server cart.
+async function mergeGuestCartIfAny() {
+    const items = guestCart();
+    if (items.length === 0) return;
+    for (const it of items) {
+        try {
+            await api("/api/cart/items", { method: "POST", auth: true, body: { productId: it.productId, quantity: it.quantity } });
+        } catch { /* skip items that no longer fit stock */ }
+    }
+    saveGuestCart([]);
+    toast("カートを引き継ぎました");
 }
 
 async function restoreSession() {
@@ -169,7 +223,7 @@ function updateCartCount(cart) {
 }
 
 async function refreshCart() {
-    if (!isLoggedIn()) { updateCartCount({ totalQuantity: 0 }); return null; }
+    if (!isLoggedIn()) { const v = guestCartView(); updateCartCount(v); renderCart(v); return v; }
     const cart = await api("/api/cart", { auth: true });
     updateCartCount(cart);
     renderCart(cart);
@@ -177,7 +231,7 @@ async function refreshCart() {
 }
 
 async function addToCart(productId) {
-    if (!isLoggedIn()) { openAuth(); return; }
+    if (!isLoggedIn()) { addGuestItem(productId); return; }
     try {
         const cart = await api("/api/cart/items", { method: "POST", auth: true, body: { productId, quantity: 1 } });
         updateCartCount(cart);
@@ -186,7 +240,26 @@ async function addToCart(productId) {
     } catch (ex) { toast(ex.message); }
 }
 
+// Guest add: look the product up from the last-rendered grid, cap at available.
+function addGuestItem(productId) {
+    const p = state.productsById[productId];
+    if (!p) { toast("商品情報が見つかりません"); return; }
+    const avail = (p.available != null) ? p.available : p.stock;
+    const items = guestCart();
+    const existing = items.find((i) => i.productId === productId);
+    const nextQty = (existing ? existing.quantity : 0) + 1;
+    if (nextQty > avail) { toast("在庫が足りません"); return; }
+    if (existing) existing.quantity = nextQty;
+    else items.push({ productId, quantity: 1, name: p.name, price: p.price, imageUrl: p.imageUrl });
+    saveGuestCart(items);
+    const v = guestCartView();
+    updateCartCount(v);
+    renderCart(v);
+    toast("カートに追加しました");
+}
+
 async function setQty(productId, quantity) {
+    if (!isLoggedIn()) { setGuestQty(productId, quantity); return; }
     try {
         let cart;
         if (quantity <= 0) {
@@ -197,6 +270,25 @@ async function setQty(productId, quantity) {
         updateCartCount(cart);
         renderCart(cart);
     } catch (ex) { toast(ex.message); }
+}
+
+function setGuestQty(productId, quantity) {
+    let items = guestCart();
+    if (quantity <= 0) {
+        items = items.filter((i) => i.productId !== productId);
+    } else {
+        const it = items.find((i) => i.productId === productId);
+        if (it) {
+            const p = state.productsById[productId];
+            const avail = p ? ((p.available != null) ? p.available : p.stock) : quantity;
+            if (quantity > avail) { toast("在庫が足りません"); return; }
+            it.quantity = quantity;
+        }
+    }
+    saveGuestCart(items);
+    const v = guestCartView();
+    updateCartCount(v);
+    renderCart(v);
 }
 
 function renderCart(cart) {
@@ -227,15 +319,39 @@ function renderCart(cart) {
     }
     $("#cartTotal").textContent = yen(cart ? cart.totalAmount : 0);
     $("#checkoutBtn").disabled = items.length === 0;
+
+    // Guests get an email field and a distinct button label; logged-in users don't.
+    const guest = !isLoggedIn();
+    $("#guestEmailField").classList.toggle("hidden", !(guest && items.length > 0));
+    $("#guestHint").classList.toggle("hidden", !(guest && items.length > 0));
+    $("#checkoutBtn").textContent = guest ? "ゲストとして注文する" : "注文を確定する";
 }
 
 async function checkout() {
+    if (!isLoggedIn()) { return guestCheckout(); }
     try {
         const order = await api("/api/orders/checkout", { method: "POST", auth: true });
         state.lastOrder = order;
         await refreshCart();
         closeDrawers();
         showOrderResult(order);
+    } catch (ex) { toast(ex.message); }
+}
+
+async function guestCheckout() {
+    const email = $("#guestEmail").value.trim();
+    if (!email) { toast("メールアドレスを入力してください"); $("#guestEmail").focus(); return; }
+    const items = guestCart().map((i) => ({ productId: i.productId, quantity: i.quantity }));
+    if (items.length === 0) { toast("カートが空です"); return; }
+    try {
+        const order = await api("/api/orders/guest-checkout", { method: "POST", body: { email, items } });
+        saveGuestCart([]);
+        rememberGuestOrder(order);
+        state.lastOrder = order;
+        await refreshCart();
+        closeDrawers();
+        showOrderResult(order);
+        loadProducts(); // reflect the newly reserved stock in the grid
     } catch (ex) { toast(ex.message); }
 }
 
@@ -273,9 +389,13 @@ function renderOrders(orders) {
 
 function showOrderResult(order) {
     const banner = $("#banner");
+    const tokenAttr = order.guest && order.orderToken ? ` data-token="${escapeHtml(order.orderToken)}"` : "";
     let html = `✅ 注文 #${order.id} を受け付けました（${yen(order.totalAmount)}・状態 ${order.status}）。`;
+    if (order.guest && order.orderToken) {
+        html += `<div class="hint" style="margin-top:6px">照会・支払い用トークン: <code>${escapeHtml(order.orderToken)}</code><br>ログインなしで注文を追跡できます。大切に保管してください。</div>`;
+    }
     if (state.paymentsEnabled && order.status === "PENDING") {
-        html += ` <button class="btn pay-btn" data-order="${order.id}" style="margin-left:8px">Stripeで支払う（テスト）</button>`;
+        html += ` <button class="btn pay-btn" data-order="${order.id}"${tokenAttr} style="margin-left:8px">Stripeで支払う（テスト）</button>`;
     } else if (!state.paymentsEnabled) {
         html += " （Stripe未設定のため決済はスキップ）";
     }
@@ -284,10 +404,14 @@ function showOrderResult(order) {
     window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-async function payWithStripe(orderId) {
+// token present → guest order (public endpoint); absent → the logged-in user's order.
+async function payWithStripe(orderId, token) {
     try {
         toast("Stripe決済ページへ移動します…");
-        const res = await api(`/api/payments/orders/${orderId}/checkout-session`, { method: "POST", auth: true });
+        const path = token
+            ? `/api/payments/guest/orders/${orderId}/checkout-session?token=${encodeURIComponent(token)}`
+            : `/api/payments/orders/${orderId}/checkout-session`;
+        const res = await api(path, { method: "POST", auth: !token });
         window.location.href = res.checkoutUrl;
     } catch (ex) { toast(ex.message); }
 }
@@ -314,8 +438,7 @@ function bind() {
     $$(".tab").forEach((t) => t.addEventListener("click", () => setAuthTab(t.dataset.tab)));
 
     $("#cartBtn").addEventListener("click", async () => {
-        if (!isLoggedIn()) { openAuth(); return; }
-        await refreshCart();
+        await refreshCart(); // works for guests (localStorage) and logged-in users alike
         openDrawer("#cartDrawer");
     });
     $("#ordersBtn").addEventListener("click", openOrders);
@@ -333,7 +456,7 @@ function bind() {
         if (add) { addToCart(Number(add.dataset.id)); return; }
 
         const pay = e.target.closest(".pay-btn");
-        if (pay) { payWithStripe(Number(pay.dataset.order)); return; }
+        if (pay) { payWithStripe(Number(pay.dataset.order), pay.dataset.token || null); return; }
 
         const qbtn = e.target.closest(".qty button");
         if (qbtn) {
@@ -361,6 +484,7 @@ async function init() {
     } catch { /* ignore */ }
     await Promise.all([loadCategories(), loadProducts()]);
     await restoreSession();
+    if (!isLoggedIn()) updateCartCount(guestCartView()); // show guest cart badge on load
     reflectAuth();
 }
 

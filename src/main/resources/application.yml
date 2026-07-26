@@ -32,6 +32,11 @@ app:
     enabled: ${APP_SEED_ENABLED:true}
     admin-email: ${APP_ADMIN_EMAIL:admin@example.com}
     admin-password: ${APP_ADMIN_PASSWORD:admin1234}
+  order:
+    # A checkout reserves (holds) stock. If unpaid within this window, a background
+    # sweep expires the order and releases the hold back to sellable stock.
+    hold-minutes: ${APP_ORDER_HOLD_MINUTES:30}
+    expiry-sweep-ms: ${APP_ORDER_EXPIRY_SWEEP_MS:60000}
   stripe:
     # TEST MODE ONLY. Leave blank to disable payments (app still boots).
     # Set sk_test_... and whsec_... in production env (never commit real keys).

@@ -75,9 +75,11 @@ public class CartService {
     }
 
     private void ensureStock(Product product, int requested) {
-        if (requested > product.getStock()) {
+        // Soft pre-check against sellable stock (total minus units held for pending
+        // orders). The authoritative guard is the atomic reserve at checkout.
+        if (requested > product.getAvailable()) {
             throw new BadRequestException(
-                    "Not enough stock for '" + product.getName() + "'. Available: " + product.getStock());
+                    "Not enough stock for '" + product.getName() + "'. Available: " + product.getAvailable());
         }
     }
 

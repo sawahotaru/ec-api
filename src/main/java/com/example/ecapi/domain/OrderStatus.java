@@ -5,5 +5,7 @@ public enum OrderStatus {
     PAID,
     SHIPPED,
     DELIVERED,
-    CANCELLED
+    CANCELLED,
+    /** Auto-cancelled because payment was not completed within the hold window. */
+    EXPIRED
 }

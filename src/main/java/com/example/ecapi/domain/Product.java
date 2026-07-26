@@ -11,6 +11,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
 import java.time.Instant;
+import org.hibernate.annotations.ColumnDefault;
 
 @Entity
 @Table(name = "products")
@@ -31,6 +32,15 @@ public class Product {
 
     @Column(nullable = false)
     private int stock;
+
+    /**
+     * Units held for PENDING (not-yet-paid) orders. Sellable stock is
+     * {@code stock - reserved}. Reserved at checkout, released on
+     * cancel/expiry, and converted to a real stock decrement on payment.
+     */
+    @Column(nullable = false)
+    @ColumnDefault("0")
+    private int reserved;
 
     private String imageUrl;
 
@@ -79,6 +89,19 @@ public class Product {
 
     public void setStock(int stock) {
         this.stock = stock;
+    }
+
+    public int getReserved() {
+        return reserved;
+    }
+
+    public void setReserved(int reserved) {
+        this.reserved = reserved;
+    }
+
+    /** Stock actually available to sell (total minus what is held for pending orders). */
+    public int getAvailable() {
+        return stock - reserved;
     }
 
     public String getImageUrl() {

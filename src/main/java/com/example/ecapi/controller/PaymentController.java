@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @Tag(name = "Payments (Stripe test mode)", description = "Stripe Checkout for orders")
@@ -40,6 +41,14 @@ public class PaymentController {
     @PostMapping("/orders/{orderId}/checkout-session")
     public CheckoutSessionResponse createSession(@PathVariable Long orderId) {
         return paymentService.createCheckoutSession(currentUserProvider.require(), orderId);
+    }
+
+    @Operation(summary = "Create a Stripe Checkout Session for a PENDING guest order",
+            description = "Guest variant: authenticate with the orderToken from guest checkout instead of logging in.")
+    @PostMapping("/guest/orders/{orderId}/checkout-session")
+    public CheckoutSessionResponse createGuestSession(@PathVariable Long orderId,
+                                                      @RequestParam String token) {
+        return paymentService.createGuestCheckoutSession(orderId, token);
     }
 
     @Operation(summary = "Stripe webhook (public, signature-verified)",

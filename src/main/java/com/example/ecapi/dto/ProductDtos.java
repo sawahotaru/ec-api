@@ -29,6 +29,8 @@ public final class ProductDtos {
             String description,
             BigDecimal price,
             int stock,
+            // Sellable right now: stock minus units held for unpaid (pending) orders.
+            int available,
             String imageUrl,
             CategoryResponse category,
             Instant createdAt) {
@@ -40,6 +42,7 @@ public final class ProductDtos {
                     product.getDescription(),
                     product.getPrice(),
                     product.getStock(),
+                    product.getAvailable(),
                     product.getImageUrl(),
                     CategoryResponse.from(product.getCategory()),
                     product.getCreatedAt());

@@ -26,9 +26,25 @@ public class Order {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.EAGER, optional = false)
-    @JoinColumn(name = "user_id", nullable = false)
+    /**
+     * The buyer, when the order was placed while logged in. Null for guest
+     * checkout — in that case {@link #guestEmail} and {@link #orderToken}
+     * identify the order instead.
+     */
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "user_id")
     private User user;
+
+    /** Contact email for a guest order. Null for a logged-in order. */
+    private String guestEmail;
+
+    /**
+     * Unguessable token handed back once at guest checkout. A guest presents it
+     * to view or pay their order (they have no account to authenticate with).
+     * Null for logged-in orders.
+     */
+    @Column(unique = true)
+    private String orderToken;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -65,6 +81,27 @@ public class Order {
 
     public void setUser(User user) {
         this.user = user;
+    }
+
+    public String getGuestEmail() {
+        return guestEmail;
+    }
+
+    public void setGuestEmail(String guestEmail) {
+        this.guestEmail = guestEmail;
+    }
+
+    public String getOrderToken() {
+        return orderToken;
+    }
+
+    public void setOrderToken(String orderToken) {
+        this.orderToken = orderToken;
+    }
+
+    /** Email of whoever placed the order — the account email, or the guest email. */
+    public String getContactEmail() {
+        return user != null ? user.getEmail() : guestEmail;
     }
 
     public OrderStatus getStatus() {
