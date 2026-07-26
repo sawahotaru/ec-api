@@ -102,12 +102,15 @@ function renderProducts(products) {
         const avail = (p.available != null) ? p.available : p.stock;
         const out = avail <= 0;
         const img = p.imageUrl ? `background-image:url('${p.imageUrl}')` : "";
+        // Thumbnail and name link to the detail page (#/product/{id}); the router handles it.
         return `
         <article class="card">
-            <div class="thumb" style="${img}"></div>
+            <a class="card-link" href="#/product/${p.id}" aria-label="${escapeHtml(p.name)} の詳細">
+                <div class="thumb" style="${img}"></div>
+            </a>
             <div class="body">
                 <div class="cat">${p.category ? escapeHtml(p.category.name) : "&nbsp;"}</div>
-                <div class="name">${escapeHtml(p.name)}</div>
+                <a class="card-link" href="#/product/${p.id}"><div class="name">${escapeHtml(p.name)}</div></a>
                 <div class="desc">${escapeHtml(p.description || "")}</div>
                 <div class="row">
                     <span class="price">${yen(p.price)}</span>
@@ -128,6 +131,62 @@ async function loadCategories() {
     const sel = $("#category");
     sel.innerHTML = '<option value="">全カテゴリ</option>' +
         state.categories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
+}
+
+/* ---------- routing / product detail ----------
+   Hash-based so detail pages are linkable and the browser Back button works.
+   #/product/{id} → detail view; anything else → the product grid. */
+function currentRoute() {
+    const m = location.hash.replace(/^#/, "").match(/^\/product\/(\d+)$/);
+    return m ? { name: "product", id: Number(m[1]) } : { name: "home" };
+}
+
+async function route() {
+    const r = currentRoute();
+    if (r.name === "product") await showDetail(r.id);
+    else showGrid();
+}
+
+function showGrid() {
+    $("#productDetail").classList.add("hidden");
+    $("#productDetail").innerHTML = "";
+    $("#grid").classList.remove("hidden");
+    // #emptyState visibility is owned by renderProducts()
+}
+
+async function showDetail(id) {
+    $("#grid").classList.add("hidden");
+    $("#emptyState").classList.add("hidden");
+    const box = $("#productDetail");
+    box.classList.remove("hidden");
+    box.innerHTML = '<p class="empty">読み込み中…</p>';
+    try {
+        const p = state.productsById[id] || await api(`/api/products/${id}`);
+        state.productsById[id] = p;
+        renderDetail(p);
+        window.scrollTo({ top: 0 });
+    } catch {
+        box.innerHTML = '<p class="empty">商品が見つかりません。 <a href="#/">一覧へ戻る</a></p>';
+    }
+}
+
+function renderDetail(p) {
+    const avail = (p.available != null) ? p.available : p.stock;
+    const out = avail <= 0;
+    const img = p.imageUrl ? `background-image:url('${p.imageUrl}')` : "";
+    $("#productDetail").innerHTML = `
+        <a href="#/" class="back-link">← 商品一覧へ戻る</a>
+        <div class="detail-grid">
+            <div class="detail-thumb" style="${img}"></div>
+            <div class="detail-info">
+                <div class="cat">${p.category ? escapeHtml(p.category.name) : ""}</div>
+                <h1 class="detail-name">${escapeHtml(p.name)}</h1>
+                <p class="detail-desc">${escapeHtml(p.description || "")}</p>
+                <div class="detail-price">${yen(p.price)}</div>
+                <div class="detail-stock ${out ? "out" : ""}">${out ? "在庫切れ" : "在庫 " + avail}</div>
+                <button class="btn wide add-btn" data-id="${p.id}" ${out ? "disabled" : ""}>カートに入れる</button>
+            </div>
+        </div>`;
 }
 
 /* ---------- auth ---------- */
@@ -515,6 +574,8 @@ async function init() {
     await restoreSession();
     if (!isLoggedIn()) updateCartCount(guestCartView()); // show guest cart badge on load
     reflectAuth();
+    window.addEventListener("hashchange", route);
+    await route(); // honor a deep link like #/product/3 on first load
 }
 
 init();
