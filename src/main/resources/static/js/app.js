@@ -19,6 +19,8 @@ const state = {
     categories: [],
     lastOrder: null,
     productsById: {},
+    // For guests at checkout: 'choice' shows 会員/ゲスト の選択、'guest' shows the guest email form.
+    guestMode: "choice",
 };
 
 async function api(path, { method = "GET", body, auth = false } = {}) {
@@ -187,6 +189,7 @@ function logout() {
     state.token = null;
     state.user = null;
     localStorage.removeItem("ec_token");
+    state.guestMode = "choice"; // back to the guest method choice
     reflectAuth();
     updateCartCount(guestCartView()); // fall back to the guest cart badge
     closeDrawers();
@@ -318,13 +321,25 @@ function renderCart(cart) {
         }).join("");
     }
     $("#cartTotal").textContent = yen(cart ? cart.totalAmount : 0);
-    $("#checkoutBtn").disabled = items.length === 0;
 
-    // Guests get an email field and a distinct button label; logged-in users don't.
+    // Checkout UI has three shapes:
+    //   member                     → the normal 「注文を確定する」 button
+    //   guest + choosing            → 会員/ゲスト の選択ボタン（choice）
+    //   guest + entered guest mode  → メール欄 ＋ 「この内容で注文する」 ＋ 選び直しリンク
     const guest = !isLoggedIn();
-    $("#guestEmailField").classList.toggle("hidden", !(guest && items.length > 0));
-    $("#guestHint").classList.toggle("hidden", !(guest && items.length > 0));
-    $("#checkoutBtn").textContent = guest ? "ゲストとして注文する" : "注文を確定する";
+    const hasItems = items.length > 0;
+    if (guest && !hasItems) state.guestMode = "choice"; // reset once the cart is empty
+    const choosing = guest && hasItems && state.guestMode === "choice";
+    const enteringGuest = guest && hasItems && state.guestMode === "guest";
+
+    $("#guestChoice").classList.toggle("hidden", !choosing);
+    $("#guestEmailField").classList.toggle("hidden", !enteringGuest);
+    $("#guestHint").classList.toggle("hidden", !enteringGuest);
+    $("#guestBackBtn").classList.toggle("hidden", !enteringGuest);
+    // Hide the main button only while the guest is still choosing a method.
+    $("#checkoutBtn").classList.toggle("hidden", choosing);
+    $("#checkoutBtn").disabled = !hasItems;
+    $("#checkoutBtn").textContent = guest ? "この内容で注文する" : "注文を確定する";
 }
 
 async function checkout() {
@@ -346,6 +361,7 @@ async function guestCheckout() {
     try {
         const order = await api("/api/orders/guest-checkout", { method: "POST", body: { email, items } });
         saveGuestCart([]);
+        state.guestMode = "choice"; // next guest visit starts from the method choice again
         rememberGuestOrder(order);
         state.lastOrder = order;
         await refreshCart();
@@ -443,6 +459,19 @@ function bind() {
     });
     $("#ordersBtn").addEventListener("click", openOrders);
     $("#checkoutBtn").addEventListener("click", checkout);
+
+    // Guest checkout method choice
+    $("#chooseMemberBtn").addEventListener("click", openAuth);       // login → cart merges → member checkout
+    $("#chooseGuestBtn").addEventListener("click", () => {
+        state.guestMode = "guest";
+        renderCart(guestCartView());
+        $("#guestEmail").focus();
+    });
+    $("#guestBackBtn").addEventListener("click", () => {
+        state.guestMode = "choice";
+        renderCart(guestCartView());
+    });
+
     $("#scrim").addEventListener("click", closeDrawers);
 
     document.body.addEventListener("click", (e) => {

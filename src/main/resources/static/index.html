@@ -38,11 +38,18 @@
     <div id="cartItems" class="drawer-body"></div>
     <div class="drawer-foot">
         <div class="total-row"><span>合計</span><strong id="cartTotal">¥0</strong></div>
+        <!-- 未ログイン時: 会員購入 / ゲスト購入 を選択（購入方法の分岐） -->
+        <div id="guestChoice" class="guest-choice hidden">
+            <p class="hint">購入方法を選択してください</p>
+            <button id="chooseMemberBtn" class="btn wide">🔐 ログインして購入（会員）</button>
+            <button id="chooseGuestBtn" class="btn wide ghost">🛒 ゲストとして購入（登録不要）</button>
+        </div>
         <label id="guestEmailField" class="field hidden">
             <span>メールアドレス（ゲスト購入）</span>
             <input id="guestEmail" type="email" placeholder="you@example.com" autocomplete="email">
         </label>
         <button id="checkoutBtn" class="btn wide" disabled>注文を確定する</button>
+        <button id="guestBackBtn" class="linklike hidden" type="button">← 購入方法を選び直す</button>
         <p id="guestHint" class="hint hidden">ログインなしで購入できます。注文後に照会用トークンを表示します。</p>
     </div>
 </aside>
