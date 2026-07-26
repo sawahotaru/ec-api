@@ -1,0 +1,37 @@
+name: Deploy to lab.4510.be
+
+# このリポジトリの main が更新されたら、統合ハブ oracle-lab のデプロイを起動する。
+# oracle-lab 側 (deploy-oracle.yml) が repository_dispatch: ec-api-updated を受け、
+# client_payload.service=ec-api を見て **ec-api サービスだけ** をVMで再ビルド/再起動する
+# （VMのビルド負荷を最小化する方式）。
+#
+# 必要な設定（1回だけ）: このリポジトリの Settings → Secrets and variables → Actions に
+#   Secret `OL_DISPATCH_PAT` を追加。値は sawahotaru/oracle-lab へ書き込める PAT。
+#     - fine-grained PAT: Repository access=sawahotaru/oracle-lab のみ、Permissions → Contents: Read and write
+#     - もしくは classic PAT: scope `repo`
+#   ※ Actions 標準の GITHUB_TOKEN は他リポジトリを起動できないため PAT が必須。
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger oracle-lab deploy (scoped to ec-api)
+        env:
+          TOKEN: ${{ secrets.OL_DISPATCH_PAT }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Secret OL_DISPATCH_PAT is not set (repo Settings → Secrets → Actions)."
+            exit 1
+          fi
+          curl -sSf -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/sawahotaru/oracle-lab/dispatches \
+            -d '{"event_type":"ec-api-updated","client_payload":{"service":"ec-api","ref":"${{ github.sha }}"}}'
+          echo "Dispatched ec-api-updated → oracle-lab (deploys ec-api only)."
