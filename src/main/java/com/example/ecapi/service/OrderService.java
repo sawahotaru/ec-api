@@ -143,7 +143,7 @@ public class OrderService {
             orderItem.setTaxRatePercent(rate);
 
             BigDecimal lineListTotal = orderItem.getLineTotal(); // INCLUSIVE=税込 / EXCLUSIVE=税抜
-            BigDecimal lineTax = taxService.taxForLine(lineListTotal, rate);
+            BigDecimal lineTax = taxService.taxForLine(lineListTotal, rate, mode);
             orderItem.setTaxAmount(lineTax);
             order.addItem(orderItem);
 

@@ -27,19 +27,20 @@ public class TaxService {
     private static final BigDecimal HUNDRED = new BigDecimal("100");
 
     private final TaxRateRepository taxRateRepository;
-    private final PricingMode pricingMode;
+    private final SettingService settingService;
     private final RoundingMode rounding;
 
     public TaxService(TaxRateRepository taxRateRepository,
-                      @Value("${app.tax.pricing-mode:INCLUSIVE}") PricingMode pricingMode,
+                      SettingService settingService,
                       @Value("${app.tax.rounding:FLOOR}") RoundingMode rounding) {
         this.taxRateRepository = taxRateRepository;
-        this.pricingMode = pricingMode;
+        this.settingService = settingService;
         this.rounding = rounding;
     }
 
+    /** Current pricing mode (admin-switchable at runtime; resolved per call). */
     public PricingMode pricingMode() {
-        return pricingMode;
+        return settingService.getPricingMode();
     }
 
     /** The percentage in effect for a category on a date (0 if none configured). */
@@ -58,12 +59,12 @@ public class TaxService {
      *                   mode the tax-exclusive (net) line total.
      * @param ratePercent e.g. 10.00
      */
-    public BigDecimal taxForLine(BigDecimal lineAmount, BigDecimal ratePercent) {
+    public BigDecimal taxForLine(BigDecimal lineAmount, BigDecimal ratePercent, PricingMode mode) {
         if (ratePercent == null || ratePercent.signum() == 0) {
             return BigDecimal.ZERO.setScale(2);
         }
         BigDecimal tax;
-        if (pricingMode == PricingMode.INCLUSIVE) {
+        if (mode == PricingMode.INCLUSIVE) {
             // price is tax-included: tax = amount * rate / (100 + rate)
             tax = lineAmount.multiply(ratePercent)
                     .divide(HUNDRED.add(ratePercent), 0, rounding);

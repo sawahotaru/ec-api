@@ -388,6 +388,8 @@ function renderCart(cart) {
         }).join("");
     }
     $("#cartTotal").textContent = yen(cart ? cart.totalAmount : 0) + taxSuffix();
+    // In 外税 mode the cart total is tax-exclusive; tax is added at checkout.
+    $("#cartTaxNote").classList.toggle("hidden", !(state.taxMode === "EXCLUSIVE" && items.length > 0));
 
     // Checkout UI has three shapes:
     //   member                     → the normal 「注文を確定する」 button

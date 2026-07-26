@@ -1,5 +1,6 @@
 package com.example.ecapi.dto;
 
+import com.example.ecapi.domain.PricingMode;
 import com.example.ecapi.domain.TaxCategory;
 import com.example.ecapi.domain.TaxRate;
 import jakarta.validation.constraints.DecimalMin;
@@ -42,5 +43,12 @@ public final class TaxDtos {
 
         public record CurrentRate(String category, BigDecimal ratePercent) {
         }
+    }
+
+    /** Admin: switch the tax pricing mode at runtime. */
+    public record PricingModeRequest(@NotNull PricingMode pricingMode) {
+    }
+
+    public record SettingsResponse(String pricingMode) {
     }
 }
