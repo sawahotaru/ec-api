@@ -16,6 +16,7 @@
     </div>
     <div class="account">
         <span id="userLabel" class="user-label hidden"></span>
+        <button id="adminBtn" class="btn ghost hidden">⚙️ 管理</button>
         <button id="ordersBtn" class="btn ghost hidden">注文履歴</button>
         <button id="cartBtn" class="btn ghost">🛒 <span id="cartCount">0</span></button>
         <button id="authBtn" class="btn">ログイン</button>
@@ -29,6 +30,8 @@
     <div id="emptyState" class="empty hidden">該当する商品がありません。</div>
     <!-- 商品詳細ページ（#/product/{id} でグリッドと切替） -->
     <section id="productDetail" class="detail hidden" aria-live="polite"></section>
+    <!-- 管理パネル（#/admin・ADMINロールのみ） -->
+    <section id="adminPanel" class="admin hidden" aria-live="polite"></section>
 </main>
 
 <!-- Cart drawer -->
@@ -39,8 +42,10 @@
     </div>
     <div id="cartItems" class="drawer-body"></div>
     <div class="drawer-foot">
-        <div class="total-row"><span>合計</span><strong id="cartTotal">¥0</strong></div>
-        <p id="cartTaxNote" class="hint hidden" style="margin:0 0 8px">※表示は税抜です。消費税は注文確定時に加算されます。</p>
+        <!-- 税内訳（外税時は概算。確定額は注文時のスナップショット） -->
+        <div id="cartTax" class="tax-breakdown hidden"></div>
+        <div class="total-row"><span id="cartTotalLabel">合計</span><strong id="cartTotal">¥0</strong></div>
+        <p id="cartTaxNote" class="hint hidden" style="margin:0 0 8px">※消費税は注文確定時の税率で確定します（上記は概算）。</p>
         <!-- 未ログイン時: 会員購入 / ゲスト購入 を選択（購入方法の分岐） -->
         <div id="guestChoice" class="guest-choice hidden">
             <p class="hint">購入方法を選択してください</p>

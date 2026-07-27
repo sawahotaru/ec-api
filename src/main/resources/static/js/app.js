@@ -23,12 +23,43 @@ const state = {
     guestMode: "choice",
     // Tax display: pricing mode (INCLUSIVE=内税/EXCLUSIVE=外税) from /api/tax/config.
     taxMode: "INCLUSIVE",
+    // { STANDARD: 10, REDUCED: 8 } — currently-effective rates, for the cart estimate.
+    taxRates: {},
 };
 
 // Suffix shown after prices, e.g. 「（税込）」. Prices in the catalog are tax-included
 // in INCLUSIVE mode, tax-exclusive in EXCLUSIVE mode.
 function taxSuffix() {
     return state.taxMode === "EXCLUSIVE" ? "（税抜）" : "（税込）";
+}
+
+async function loadTaxConfig() {
+    const tax = await api("/api/tax/config");
+    state.taxMode = tax.pricingMode || "INCLUSIVE";
+    state.taxRates = {};
+    (tax.rates || []).forEach((r) => { state.taxRates[r.category] = Number(r.ratePercent); });
+}
+
+/* ---------- cart-side tax estimate ----------
+   Mirrors TaxService: per-line, truncated to whole yen (app.tax.rounding=FLOOR).
+   INCLUSIVE → tax = floor(line * rate / (100 + rate))   (line is tax-included)
+   EXCLUSIVE → tax = floor(line * rate / 100)            (line is tax-exclusive)
+   This is an ESTIMATE for display only — the authoritative figures are snapshotted
+   onto the order at checkout, so a rate change mid-session can't desync history. */
+function lineTax(lineAmount, ratePercent, mode) {
+    if (!ratePercent) return 0;
+    const divisor = mode === "EXCLUSIVE" ? 100 : 100 + ratePercent;
+    return Math.floor((lineAmount * ratePercent) / divisor);
+}
+
+function estimateCartTax(items) {
+    let tax = 0;
+    for (const it of items) {
+        const cat = (it.product && it.product.taxCategory) || "STANDARD";
+        const rate = state.taxRates[cat];
+        tax += lineTax(Number(it.lineTotal || 0), rate, state.taxMode);
+    }
+    return tax;
 }
 
 async function api(path, { method = "GET", body, auth = false } = {}) {
@@ -68,7 +99,8 @@ function saveGuestCart(items) { localStorage.setItem(GUEST_CART_KEY, JSON.string
 // Shape the guest cart like a server CartResponse so renderCart() is shared.
 function guestCartView() {
     const items = guestCart().map((it) => ({
-        product: { id: it.productId, name: it.name, price: it.price, imageUrl: it.imageUrl },
+        // taxCategory may be absent in carts saved before the tax feature — default it.
+        product: { id: it.productId, name: it.name, price: it.price, imageUrl: it.imageUrl, taxCategory: it.taxCategory || "STANDARD" },
         quantity: it.quantity,
         lineTotal: it.price * it.quantity,
     }));
@@ -145,26 +177,39 @@ async function loadCategories() {
    Hash-based so detail pages are linkable and the browser Back button works.
    #/product/{id} → detail view; anything else → the product grid. */
 function currentRoute() {
-    const m = location.hash.replace(/^#/, "").match(/^\/product\/(\d+)$/);
-    return m ? { name: "product", id: Number(m[1]) } : { name: "home" };
+    const path = location.hash.replace(/^#/, "");
+    const m = path.match(/^\/product\/(\d+)$/);
+    if (m) return { name: "product", id: Number(m[1]) };
+    if (path === "/admin") return { name: "admin" };
+    return { name: "home" };
 }
 
 async function route() {
     const r = currentRoute();
     if (r.name === "product") await showDetail(r.id);
+    else if (r.name === "admin") await showAdmin();
     else showGrid();
 }
 
-function showGrid() {
+// Exactly one of grid / detail / admin is visible at a time.
+function hideViews() {
     $("#productDetail").classList.add("hidden");
     $("#productDetail").innerHTML = "";
+    $("#adminPanel").classList.add("hidden");
+    $("#adminPanel").innerHTML = "";
+    $("#grid").classList.add("hidden");
+    $("#emptyState").classList.add("hidden");
+}
+
+function showGrid() {
+    hideViews();
     $("#grid").classList.remove("hidden");
     // #emptyState visibility is owned by renderProducts()
+    $("#emptyState").classList.toggle("hidden", $("#grid").children.length > 0);
 }
 
 async function showDetail(id) {
-    $("#grid").classList.add("hidden");
-    $("#emptyState").classList.add("hidden");
+    hideViews();
     const box = $("#productDetail");
     box.classList.remove("hidden");
     box.innerHTML = '<p class="empty">読み込み中…</p>';
@@ -197,6 +242,188 @@ function renderDetail(p) {
         </div>`;
 }
 
+/* ---------- admin panel (#/admin, ADMIN role only) ----------
+   Wraps the ADMIN-only APIs that previously had no UI:
+     GET/PUT /api/admin/settings/pricing-mode  → 内税/外税 の切替（再デプロイ不要）
+     CRUD    /api/admin/tax-rates              → 有効期間つき税率のメンテ
+   Switching the mode or a rate affects FUTURE orders only; past orders keep the
+   values snapshotted at purchase time. */
+function isAdmin() { return !!(state.user && state.user.role === "ADMIN"); }
+
+async function showAdmin() {
+    hideViews();
+    const box = $("#adminPanel");
+    box.classList.remove("hidden");
+    if (!isAdmin()) {
+        box.innerHTML = `<a href="#/" class="back-link">← 商品一覧へ戻る</a>
+            <p class="empty">管理者としてログインしてください。</p>`;
+        return;
+    }
+    box.innerHTML = '<p class="empty">読み込み中…</p>';
+    try {
+        const [settings, rates] = await Promise.all([
+            api("/api/admin/settings", { auth: true }),
+            api("/api/admin/tax-rates", { auth: true }),
+        ]);
+        renderAdmin(settings, rates);
+    } catch (ex) {
+        box.innerHTML = `<a href="#/" class="back-link">← 商品一覧へ戻る</a>
+            <p class="empty">管理情報を取得できませんでした: ${escapeHtml(ex.message)}</p>`;
+    }
+}
+
+function renderAdmin(settings, rates) {
+    const mode = settings.pricingMode;
+    const today = new Date().toISOString().slice(0, 10);
+    // Sort so the effective-date timeline reads top-down per category.
+    const sorted = [...rates].sort((a, b) =>
+        a.category.localeCompare(b.category) || a.effectiveFrom.localeCompare(b.effectiveFrom));
+
+    const activeIds = effectiveRateIds(rates, today);
+    const rows = sorted.map((r) => {
+        const active = activeIds.has(r.id);
+        return `
+        <tr data-rate="${r.id}" class="${active ? "rate-active" : ""}">
+            <td>
+                <select data-f="category">
+                    <option value="STANDARD" ${r.category === "STANDARD" ? "selected" : ""}>標準</option>
+                    <option value="REDUCED" ${r.category === "REDUCED" ? "selected" : ""}>軽減</option>
+                </select>
+            </td>
+            <td><input data-f="ratePercent" type="number" step="0.01" min="0" value="${r.ratePercent}"> %</td>
+            <td><input data-f="effectiveFrom" type="date" value="${r.effectiveFrom}"></td>
+            <td><input data-f="effectiveTo" type="date" value="${r.effectiveTo || ""}"></td>
+            <td class="rate-state">${active ? "適用中" : ""}</td>
+            <td class="rate-actions">
+                <button class="btn ghost sm" data-act="save-rate">保存</button>
+                <button class="link-danger" data-act="del-rate">削除</button>
+            </td>
+        </tr>`;
+    }).join("");
+
+    $("#adminPanel").innerHTML = `
+        <a href="#/" class="back-link">← 商品一覧へ戻る</a>
+        <h1 class="admin-title">⚙️ ストア管理</h1>
+
+        <section class="admin-card">
+            <h2>税の表示方式</h2>
+            <p class="hint">価格の見せ方を切り替えます。<strong>再デプロイ不要・即時反映</strong>。
+               切替は<strong>今後の注文のみ</strong>に影響し、過去の注文は当時の方式・税額のまま変わりません。</p>
+            <div class="mode-switch">
+                <button class="btn ${mode === "INCLUSIVE" ? "" : "ghost"}" data-act="mode" data-mode="INCLUSIVE">内税（税込表示）</button>
+                <button class="btn ${mode === "EXCLUSIVE" ? "" : "ghost"}" data-act="mode" data-mode="EXCLUSIVE">外税（税抜表示）</button>
+            </div>
+            <p class="hint">現在: <strong>${mode === "EXCLUSIVE" ? "外税（税抜表示）" : "内税（税込表示）"}</strong></p>
+        </section>
+
+        <section class="admin-card">
+            <h2>消費税率（有効期間つき）</h2>
+            <p class="hint">税率改定は<strong>行の追加</strong>で行います。同じ区分で期間が重なっても構いません（<strong>開始日が新しい行が優先</strong>）。将来日付で予約しておけば当日から自動で切り替わります。
+               <br>「適用中」は本日実際に使われる行。<strong>終了日はその日を含みません</strong>（2026/12/31 終了なら 12/30 まで有効）。</p>
+            <div class="table-wrap">
+                <table class="admin-table">
+                    <thead><tr><th>区分</th><th>税率</th><th>開始日</th><th>終了日（空=無期限）</th><th></th><th></th></tr></thead>
+                    <tbody>${rows || '<tr><td colspan="6" class="empty">税率が未登録です。</td></tr>'}</tbody>
+                </table>
+            </div>
+            <div class="rate-new">
+                <h3>税率を追加</h3>
+                <div class="rate-new-row">
+                    <select id="newCategory">
+                        <option value="STANDARD">標準</option>
+                        <option value="REDUCED">軽減</option>
+                    </select>
+                    <input id="newRate" type="number" step="0.01" min="0" placeholder="10.00">
+                    <input id="newFrom" type="date" value="${today}">
+                    <input id="newTo" type="date" placeholder="終了日（任意）">
+                    <button class="btn" data-act="add-rate">追加</button>
+                </div>
+            </div>
+        </section>`;
+}
+
+/* Which rows are actually in force today — mirrors TaxRateRepository.findEffective:
+     effectiveFrom <= today  AND  (effectiveTo IS NULL OR today < effectiveTo)
+   …then, per category, the server takes the FIRST of "ORDER BY effectiveFrom DESC".
+   So overlapping rows exist happily (adding 12% doesn't require closing the old 10%),
+   but only the newest one wins. Note effectiveTo is EXCLUSIVE: a row ending 2026-12-31
+   is not in force on that day. */
+function effectiveRateIds(rates, today) {
+    const winner = {};
+    for (const r of rates) {
+        if (r.effectiveFrom > today) continue;
+        if (r.effectiveTo && !(today < r.effectiveTo)) continue;
+        const cur = winner[r.category];
+        if (!cur || r.effectiveFrom > cur.effectiveFrom) winner[r.category] = r;
+    }
+    return new Set(Object.values(winner).map((r) => r.id));
+}
+
+async function setPricingMode(pricingMode) {
+    try {
+        await api("/api/admin/settings/pricing-mode", { method: "PUT", auth: true, body: { pricingMode } });
+        await afterTaxChange(pricingMode === "EXCLUSIVE" ? "外税に切り替えました" : "内税に切り替えました");
+    } catch (ex) { toast(ex.message); }
+}
+
+function readRateRow(tr) {
+    const val = (f) => tr.querySelector(`[data-f="${f}"]`).value;
+    return {
+        category: val("category"),
+        // Keep the raw string: Number("") is 0, which would silently save a 0% rate.
+        rateRaw: val("ratePercent").trim(),
+        ratePercent: Number(val("ratePercent")),
+        effectiveFrom: val("effectiveFrom"),
+        effectiveTo: val("effectiveTo") || null,
+    };
+}
+
+async function saveRate(tr) {
+    const id = tr.dataset.rate;
+    const { rateRaw, ...body } = readRateRow(tr);
+    if (rateRaw === "" || Number.isNaN(body.ratePercent)) { toast("税率を入力してください"); return; }
+    if (!body.effectiveFrom) { toast("開始日を入力してください"); return; }
+    try {
+        await api(`/api/admin/tax-rates/${id}`, { method: "PUT", auth: true, body });
+        await afterTaxChange("税率を更新しました");
+    } catch (ex) { toast(ex.message); }
+}
+
+async function deleteRate(tr) {
+    if (!window.confirm("この税率を削除しますか？（過去の注文の税額は変わりません）")) return;
+    try {
+        await api(`/api/admin/tax-rates/${tr.dataset.rate}`, { method: "DELETE", auth: true });
+        await afterTaxChange("税率を削除しました");
+    } catch (ex) { toast(ex.message); }
+}
+
+async function addRate() {
+    const rateRaw = $("#newRate").value.trim();
+    const body = {
+        category: $("#newCategory").value,
+        ratePercent: Number(rateRaw),
+        effectiveFrom: $("#newFrom").value,
+        effectiveTo: $("#newTo").value || null,
+    };
+    // Empty input must not become 0% — Number("") === 0 would sneak past a falsy check.
+    if (rateRaw === "" || Number.isNaN(body.ratePercent)) { toast("税率を入力してください"); return; }
+    if (!body.effectiveFrom) { toast("開始日を入力してください"); return; }
+    try {
+        await api("/api/admin/tax-rates", { method: "POST", auth: true, body });
+        await afterTaxChange("税率を追加しました");
+    } catch (ex) { toast(ex.message); }
+}
+
+// A tax change alters how the whole storefront displays prices — repull the public
+// config and repaint, so the admin sees the same thing a shopper would.
+async function afterTaxChange(msg) {
+    await loadTaxConfig();
+    await loadProducts();
+    await refreshCart();
+    await showAdmin();
+    toast(msg);
+}
+
 /* ---------- auth ---------- */
 function isLoggedIn() { return !!state.token; }
 
@@ -205,6 +432,7 @@ function reflectAuth() {
     $("#authBtn").classList.toggle("hidden", logged);
     $("#logoutBtn").classList.toggle("hidden", !logged);
     $("#ordersBtn").classList.toggle("hidden", !logged);
+    $("#adminBtn").classList.toggle("hidden", !isAdmin());
     const label = $("#userLabel");
     label.classList.toggle("hidden", !logged);
     label.textContent = state.user ? `${state.user.name} さん` : "";
@@ -260,6 +488,7 @@ function logout() {
     reflectAuth();
     updateCartCount(guestCartView()); // fall back to the guest cart badge
     closeDrawers();
+    if (currentRoute().name === "admin") location.hash = "#/"; // leave the admin view
     toast("ログアウトしました");
 }
 
@@ -320,7 +549,7 @@ function addGuestItem(productId) {
     const nextQty = (existing ? existing.quantity : 0) + 1;
     if (nextQty > avail) { toast("在庫が足りません"); return; }
     if (existing) existing.quantity = nextQty;
-    else items.push({ productId, quantity: 1, name: p.name, price: p.price, imageUrl: p.imageUrl });
+    else items.push({ productId, quantity: 1, name: p.name, price: p.price, imageUrl: p.imageUrl, taxCategory: p.taxCategory || "STANDARD" });
     saveGuestCart(items);
     const v = guestCartView();
     updateCartCount(v);
@@ -387,9 +616,7 @@ function renderCart(cart) {
             </div>`;
         }).join("");
     }
-    $("#cartTotal").textContent = yen(cart ? cart.totalAmount : 0) + taxSuffix();
-    // In 外税 mode the cart total is tax-exclusive; tax is added at checkout.
-    $("#cartTaxNote").classList.toggle("hidden", !(state.taxMode === "EXCLUSIVE" && items.length > 0));
+    renderCartTax(cart, items);
 
     // Checkout UI has three shapes:
     //   member                     → the normal 「注文を確定する」 button
@@ -409,6 +636,40 @@ function renderCart(cart) {
     $("#checkoutBtn").classList.toggle("hidden", choosing);
     $("#checkoutBtn").disabled = !hasItems;
     $("#checkoutBtn").textContent = guest ? "この内容で注文する" : "注文を確定する";
+}
+
+/* Cart footer figures. The catalog price means different things per mode, so the
+   breakdown is derived rather than assumed:
+     INCLUSIVE → totalAmount is tax-included; 小計 = 合計 − 消費税
+     EXCLUSIVE → totalAmount is tax-exclusive; 合計 = 小計 + 消費税
+   Both are estimates until checkout snapshots them onto the order. */
+function renderCartTax(cart, items) {
+    const box = $("#cartTax");
+    const sum = Number((cart && cart.totalAmount) || 0);
+    const exclusive = state.taxMode === "EXCLUSIVE";
+
+    if (items.length === 0) {
+        box.classList.add("hidden");
+        box.innerHTML = "";
+        $("#cartTaxNote").classList.add("hidden");
+        $("#cartTotalLabel").textContent = "合計";
+        $("#cartTotal").textContent = yen(0);
+        return;
+    }
+
+    const tax = estimateCartTax(items);
+    const subtotal = exclusive ? sum : sum - tax;
+    const total = exclusive ? sum + tax : sum;
+
+    box.innerHTML = `
+        <div><span>小計（税抜）</span><span>${yen(subtotal)}</span></div>
+        <div><span>消費税${exclusive ? "（概算）" : ""}</span><span>${yen(tax)}</span></div>`;
+    box.classList.remove("hidden");
+
+    $("#cartTotalLabel").textContent = exclusive ? "合計（税込・概算）" : "合計（税込）";
+    $("#cartTotal").textContent = yen(total);
+    // Only 外税 needs the caveat: the shown total is derived here, not by the server yet.
+    $("#cartTaxNote").classList.toggle("hidden", !exclusive);
 }
 
 async function checkout() {
@@ -538,6 +799,7 @@ function bind() {
         openDrawer("#cartDrawer");
     });
     $("#ordersBtn").addEventListener("click", openOrders);
+    $("#adminBtn").addEventListener("click", () => { location.hash = "#/admin"; });
     $("#checkoutBtn").addEventListener("click", checkout);
 
     // Guest checkout method choice
@@ -567,6 +829,17 @@ function bind() {
         const pay = e.target.closest(".pay-btn");
         if (pay) { payWithStripe(Number(pay.dataset.order), pay.dataset.token || null); return; }
 
+        // Admin panel actions (the panel is re-rendered, so delegate rather than bind).
+        const act = e.target.closest("[data-act]");
+        if (act) {
+            const kind = act.dataset.act;
+            if (kind === "mode") { setPricingMode(act.dataset.mode); return; }
+            if (kind === "add-rate") { addRate(); return; }
+            const tr = act.closest("tr[data-rate]");
+            if (tr && kind === "save-rate") { saveRate(tr); return; }
+            if (tr && kind === "del-rate") { deleteRate(tr); return; }
+        }
+
         const qbtn = e.target.closest(".qty button");
         if (qbtn) {
             const wrap = qbtn.closest(".qty");
@@ -592,9 +865,8 @@ async function init() {
         }
     } catch { /* ignore */ }
     try {
-        const tax = await api("/api/tax/config");
-        state.taxMode = tax.pricingMode || "INCLUSIVE";
-    } catch { /* keep default */ }
+        await loadTaxConfig();
+    } catch { /* keep defaults */ }
     await Promise.all([loadCategories(), loadProducts()]);
     await restoreSession();
     if (!isLoggedIn()) updateCartCount(guestCartView()); // show guest cart badge on load

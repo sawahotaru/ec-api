@@ -209,3 +209,39 @@ main { max-width: 1140px; margin: 0 auto; padding: 22px 20px 80px; }
     .search { order: 3; flex-basis: 100%; max-width: none; }
     .topbar { flex-wrap: wrap; }
 }
+
+/* Admin panel (#/admin) */
+.admin { max-width: 900px; margin: 0 auto; }
+.admin-title { font-size: 22px; margin: 10px 0 18px; }
+.admin-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 18px;
+    margin-bottom: 18px;
+}
+.admin-card h2 { font-size: 16px; margin: 0 0 6px; }
+.admin-card h3 { font-size: 13px; color: var(--muted); margin: 16px 0 8px; }
+.admin-card .hint { text-align: left; margin: 6px 0 0; }
+.mode-switch { display: flex; gap: 10px; margin: 14px 0 4px; flex-wrap: wrap; }
+.mode-switch .btn { flex: 1; min-width: 180px; }
+
+.table-wrap { overflow-x: auto; margin-top: 12px; }
+.admin-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 620px; }
+.admin-table th {
+    text-align: left; font-size: 11px; color: var(--muted); font-weight: 700;
+    text-transform: uppercase; letter-spacing: .02em;
+    padding: 6px 8px; border-bottom: 1px solid var(--line);
+}
+.admin-table td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.admin-table tr.rate-active { background: #f4f8ff; }
+.admin-table .rate-state { color: var(--ok); font-weight: 700; font-size: 12px; white-space: nowrap; }
+.admin-table .rate-actions { white-space: nowrap; text-align: right; }
+.admin-table input, .admin-table select, .rate-new-row input, .rate-new-row select {
+    padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px;
+    font-family: inherit; color: var(--ink); background: #fff; max-width: 150px;
+}
+.admin-table input[type="number"] { width: 80px; }
+.btn.sm { padding: 6px 10px; font-size: 12px; }
+.rate-new-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
