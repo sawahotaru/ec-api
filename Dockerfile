@@ -15,7 +15,7 @@ FROM eclipse-temurin:21-jre AS runtime
 WORKDIR /app
 COPY --from=build /build/target/ec-api-*.jar app.jar
 
-# Render/containers inject PORT; default to 8080 for local runs
+# Hosting platforms inject PORT; default to 8080 for local runs
 ENV PORT=8080
 EXPOSE 8080
 

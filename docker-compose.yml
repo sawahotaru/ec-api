@@ -1,4 +1,4 @@
-# Local dev: Spring Boot API + PostgreSQL, mirroring the Render setup.
+# Local dev: Spring Boot API + PostgreSQL, mirroring the production setup.
 # Usage: docker compose up --build   ->   http://localhost:8080/swagger-ui.html
 services:
   db:

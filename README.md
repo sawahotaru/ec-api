@@ -1,95 +1,139 @@
-# EC API — Spring Boot e-commerce REST API
+# EC API — Spring Boot の EC バックエンド ＋ ストアフロント
 
-小さいながら「ECの背骨」を一通り備えた REST API。**認証（JWT）・商品/カテゴリ・カート・注文（在庫引当）・管理者機能** を持ち、Swagger UI でそのまま試せます。Docker と Render にデプロイできる構成込み。
+「ECの背骨」を一通り備えた小さな実装。**認証（JWT）・商品/カテゴリ・カート・ゲスト購入・在庫予約・消費税・注文・決済（Stripe テスト）・管理機能** を持つ REST API と、それを叩く **素の HTML/CSS/JS のストアフロント**（商品詳細ページ・管理パネル込み）が同梱されています。Swagger UI からも画面からも試せます。
+
+**▶ 公開デモ: <https://lab.4510.be/ec/>** （API 仕様は <https://lab.4510.be/ec/swagger-ui.html>）
+
+![ストアフロント](assets/screenshot.png)
 
 ## 技術構成
 
 - Java 21 / Spring Boot 3.3
 - Spring Web / Spring Data JPA / Spring Security（JWT: jjwt）/ Bean Validation
 - PostgreSQL（本番・docker-compose）/ H2 インメモリ（デフォルト・ゼロ設定起動）
-- springdoc-openapi（Swagger UI）
-- Docker マルチステージビルド / Render Blueprint（`render.yaml`）
+- springdoc-openapi（Swagger UI）/ Stripe Java SDK（テストモード）
+- フロントは **依存ゼロのバニラ JS**（`src/main/resources/static/`・ビルド不要）
+- Docker マルチステージビルド。本番は Oracle Cloud の VM 上で Docker Compose（Caddy がリバースプロキシ）
 
-## 機能
+## 主な特徴
+
+### 在庫は「予約（hold）」してから確定する
+
+チェックアウトは在庫を**減算せず予約**します。商品には `stock`（総在庫）と `available`（= `stock` − 未払い注文が握っている数）があり、売り越しを防ぎつつ「カートに入れただけで在庫が消える」ことも起きません。
+
+```
+checkout → PENDING（在庫を hold）
+   ├─ Stripe webhook で支払い確認 → PAID（在庫を実減算）
+   └─ 30分（APP_ORDER_HOLD_MINUTES）以内に未払い → EXPIRED（hold を自動解放）
+```
+
+期限切れの掃除は `OrderExpiryScheduler` が定期実行します。**Stripe キー未設定でもアプリは正常に動き**、注文は PENDING のまま作られて期限で自動解放されます。
+
+### 消費税は「有効期間つき税率 × 注文時スナップショット」
+
+- 税率は `tax_rates` テーブルで**有効期間つき**に管理（標準10% / 軽減8%。将来日付の予約改定も可）。
+- 注文確定時に**税率・税額を注文明細へ凍結**するので、税率改定後も過去の注文は金額が変わりません。
+- **内税（INCLUSIVE）/ 外税（EXCLUSIVE）を管理画面から再デプロイ無しで切替**可能。切替は将来の注文にだけ効きます。
+- 端数処理は行ごとに切り捨て（既定。`APP_TAX_ROUNDING` で変更可）。
+
+### 会員でもゲストでも買える
+
+ゲストはメールアドレスと明細を渡すだけで購入でき、レスポンスで一度だけ返る**推測不能なトークン**で後から注文を照会します（`GET /api/orders/guest/{id}?token=...`）。サーバー側カートを持たないため、フロントは localStorage で持ちます。
+
+## エンドポイント
 
 | 領域 | エンドポイント | 権限 |
 |---|---|---|
 | 認証 | `POST /api/auth/register`, `/login`, `GET /api/auth/me` | 公開 / 本人 |
-| 商品（閲覧） | `GET /api/products`（検索`q`・`categoryId`・ページング・`sort`）, `GET /api/products/{id}` | 公開 |
+| 商品（閲覧） | `GET /api/products`（検索 `q`・`categoryId`・ページング・`sort`）, `GET /api/products/{id}` | 公開 |
 | カテゴリ（閲覧） | `GET /api/categories`, `/{id}` | 公開 |
-| カート | `GET /api/cart`, `POST /api/cart/items`, `PUT/DELETE /api/cart/items/{productId}`, `DELETE /api/cart` | ユーザー |
-| 注文 | `POST /api/orders/checkout`, `GET /api/orders`, `/{id}` | ユーザー（本人のみ） |
+| カート（会員） | `GET /api/cart`, `POST /api/cart/items`, `PUT/DELETE /api/cart/items/{productId}`, `DELETE /api/cart` | ユーザー |
+| 注文（会員） | `POST /api/orders/checkout`, `GET /api/orders`, `/{id}` | ユーザー（本人のみ） |
+| 注文（ゲスト） | `POST /api/orders/guest-checkout`, `GET /api/orders/guest/{id}?token=` | 公開（トークン照合） |
+| 税（公開） | `GET /api/tax/config`（内税/外税と現行税率） | 公開 |
+| 決済（Stripe・テスト） | `GET /api/payments/config`, `POST /api/payments/orders/{id}/checkout-session`, `POST /api/payments/guest/orders/{id}/checkout-session`, `POST /api/payments/webhook` | 公開 / 本人 |
 | 管理: 商品 | `POST/PUT/DELETE /api/admin/products` | ADMIN |
 | 管理: カテゴリ | `POST/PUT/DELETE /api/admin/categories` | ADMIN |
 | 管理: 注文 | `GET /api/admin/orders`, `/{id}`, `PATCH /api/admin/orders/{id}/status` | ADMIN |
-| 決済（Stripe・テスト） | `GET /api/payments/config`, `POST /api/payments/orders/{id}/checkout-session`, `POST /api/payments/webhook` | 公開 / 本人 |
+| 管理: 税率 | `GET/POST/PUT/DELETE /api/admin/tax-rates` | ADMIN |
+| 管理: 設定 | `GET /api/admin/settings`, `PUT /api/admin/settings/pricing-mode` | ADMIN |
 
-チェックアウトは **在庫チェック → 注文作成 → 在庫減算 → カート空** を1トランザクションで実行し、注文明細には購入時点の商品名・単価をスナップショット保存します。
+注文明細には購入時点の**商品名・単価・税区分・税率・税額**をスナップショット保存します。
+
+## ストアフロント（同梱 UI）
+
+`/` を開くと商品一覧が出ます。ハッシュルーティングなので URL をそのまま共有できます。
+
+| ルート | 内容 |
+|---|---|
+| `#/`（既定） | 商品グリッド（検索・カテゴリ絞り込み・ページング） |
+| `#/product/{id}` | 商品詳細（大画像・在庫・カート追加。deep link 可） |
+| `#/admin` | 管理パネル。**ADMIN でログインしたときだけ**ヘッダに「⚙️ 管理」が出る |
+
+管理パネルからは **内税/外税トグル**と**税率テーブルの追加・改定・削除**ができます（「適用中」バッジはサーバーの実効税率判定と同じロジック＝終了日は排他的）。カートには税内訳（小計 / 消費税 / 合計）が出ます。
 
 ## ローカル実行
 
-> **`<Port>` について**: コマンド中の `<Port>` は**ホスト側の公開ポート**。任意の空きポートに置き換えてください。
-> 標準は **`8080`**（分かりやすさ重視）、このワークスペースでの参考値は **`8502`**。
-> `-p <Port>:8080` の右側（コンテナ内ポート）は常に **8080 固定**です。
+> **`<Port>` について**: コマンド中の `<Port>` は**ホスト側の公開ポート**で、任意の空きポートに置き換えてください。`-p <Port>:8080` の右側（コンテナ内ポート）は常に **8080 固定**です。
 
-### A. Docker Compose（API + PostgreSQL・本番相当）
+### A. Docker 単体（H2 インメモリ・最速）
+
+```bash
+docker build -t ec-api .
+docker run --rm -p 8080:8080 ec-api
+# → http://localhost:8080/            （ストアフロント）
+# → http://localhost:8080/swagger-ui.html
+```
+
+### B. Docker Compose（API + PostgreSQL・本番相当）
 
 ```bash
 docker compose up --build
 # → http://localhost:8080/swagger-ui.html
-# ホストポートは docker-compose.yml の ports で定義（既定 8080）。変えたい場合はそこを編集。
+# ホストポートは docker-compose.yml の ports で定義（既定 8080）
 ```
 
-### B. Docker 単体（H2 インメモリ・最速）
-
-```bash
-docker build -t ec-api .
-docker run --rm -p <Port>:8080 ec-api      # 例: -p 8080:8080（標準） / -p 8502:8080（参考）
-# → http://localhost:<Port>/swagger-ui.html
-```
-
-> ローカルに JDK は不要（すべて Docker 内でビルド）。JDK 21 + Maven がある場合は `mvn spring-boot:run` でも可。
+> ローカルに JDK は不要（すべて Docker 内でビルド）。JDK 21 + Maven があれば `mvn spring-boot:run` でも可。
 
 ## 初期データ（シード）
 
 `APP_SEED_ENABLED=true`（デフォルト）で起動時に投入されます。
 
-- 管理者: `admin@example.com` / `admin1234`（`APP_ADMIN_EMAIL` / `APP_ADMIN_PASSWORD` で変更可）
+- 管理者: `admin@example.com` / `admin1234`
 - デモユーザー: `user@example.com` / `user1234`
-- カテゴリ3件・商品6件
+- カテゴリ3件・商品6件、税率（標準10% / 軽減8%・2019-10-01〜）
+
+> ⚠️ **これはローカル/デモ用のシード値です。** 公開環境では必ず `APP_ADMIN_EMAIL` / `APP_ADMIN_PASSWORD` と `APP_JWT_SECRET` を環境変数で上書きしてください（公開デモも既定値では動かしていません）。
 
 ## 使い方（最短フロー）
 
 ```bash
-BASE=http://localhost:8080        # 自分の <Port> に合わせる（例 http://localhost:8502）
+BASE=http://localhost:8080
 
-# 1) ログインしてトークン取得
+# --- 会員として買う ---
 curl -s -X POST $BASE/api/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"user@example.com","password":"user1234"}'
+TOKEN=...   # 返ってきた token
 
-# 2) 返ってきた token を Bearer にセット
-TOKEN=... 
-
-# 3) カートに追加 → チェックアウト
 curl -X POST $BASE/api/cart/items \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"productId":1,"quantity":2}'
 
-curl -X POST $BASE/api/orders/checkout \
-  -H "Authorization: Bearer $TOKEN"
+curl -X POST $BASE/api/orders/checkout -H "Authorization: Bearer $TOKEN"
+
+# --- ゲストとして買う（アカウント不要）---
+curl -s -X POST $BASE/api/orders/guest-checkout \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"guest@example.com","items":[{"productId":1,"quantity":1}]}'
+# → レスポンスの orderToken を控える（返るのはこの一度きり）
+curl -s "$BASE/api/orders/guest/1?token=<orderToken>"
+
+# --- 現在の税設定 ---
+curl -s $BASE/api/tax/config
 ```
 
 Swagger UI なら右上の **Authorize** にトークンを貼れば全エンドポイントを画面から試せます。
-
-## Render へのデプロイ
-
-1. このリポジトリを GitHub に push
-2. Render の **New + → Blueprint** でリポジトリを選択（`render.yaml` を自動検出）
-3. `APP_ADMIN_PASSWORD` を設定（他は自動: DB接続・JWTシークレットは自動生成）
-4. 数分でビルド → `https://<name>.onrender.com/swagger-ui.html`
-
-> 無料プランはアイドルでスリープするため、初回アクセスの起動に十数秒かかることがあります。
 
 ## 環境変数
 
@@ -101,28 +145,39 @@ Swagger UI なら右上の **Authorize** にトークンを貼れば全エンド
 | `APP_JWT_EXPIRATION_MS` | トークン有効期限 | 86400000（24h） |
 | `APP_SEED_ENABLED` | 起動時シード | true |
 | `APP_ADMIN_EMAIL` / `APP_ADMIN_PASSWORD` | 初期管理者 | admin@example.com / admin1234 |
+| `APP_ORDER_HOLD_MINUTES` | 未払い注文が在庫を保持する時間 | 30 |
+| `APP_ORDER_EXPIRY_SWEEP_MS` | 期限切れ掃除の実行間隔 | 60000 |
+| `APP_TAX_PRICING_MODE` | `INCLUSIVE`（内税）/ `EXCLUSIVE`（外税）の**初期値**（以後は管理画面の設定が優先） | INCLUSIVE |
+| `APP_TAX_ROUNDING` | 端数処理 `FLOOR` / `HALF_UP` / `CEILING` | FLOOR |
+| `APP_CONTEXT_PATH` | サブパス配信時のプレフィックス（本番は `/ec`） | （空＝ルート） |
 | `STRIPE_SECRET_KEY` | Stripe テストキー `sk_test_...`（空=決済無効） | （空） |
 | `STRIPE_WEBHOOK_SECRET` | Webhook 署名シークレット `whsec_...` | （空） |
 | `STRIPE_CURRENCY` / `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL` | 通貨・決済後リダイレクト先 | jpy / `/api/payments/*` |
-| `PORT` | **アプリ待受ポート（コンテナ内）**。Render 等が注入。ホスト公開ポート `<Port>` とは別 | 8080 |
+| `PORT` | **アプリ待受ポート（コンテナ内）** | 8080 |
 
 ## 決済（Stripe・テストモード専用）
 
-Stripe Checkout（ホスト型）。`checkout-session` が返す `checkoutUrl` をブラウザで開き、テストカード **`4242 4242 4242 4242`**（有効期限=任意の未来 / CVC=任意）で支払うと、Webhook 経由で注文が **PAID** になります。
+Stripe Checkout（ホスト型）。`checkout-session` が返す `checkoutUrl` をブラウザで開き、テストカード **`4242 4242 4242 4242`**（有効期限=任意の未来 / CVC=任意）で支払うと、Webhook（`checkout.session.completed`）経由で注文が **PAID** になり、予約在庫が実減算されます。
 
 ```bash
-# 1) 注文を作成（PENDING）→ 2) 決済セッション作成 → 返る checkoutUrl を開く
 curl -s -X POST $BASE/api/payments/orders/1/checkout-session \
   -H "Authorization: Bearer $TOKEN" | jq -r .checkoutUrl
 ```
 
-キー未設定でもアプリは起動します（決済系のみ 400）。Webhook のローカル転送は Stripe CLI:
+Webhook のローカル転送は Stripe CLI:
 `stripe listen --forward-to localhost:<Port>/api/payments/webhook`
 
+> ⚠️ **キーを入れるなら Webhook 登録もセットで。** 実減算の契機は Webhook だけなので、キーだけ設定して Webhook 未登録だと「支払ったのに期限切れで EXPIRED」になります。
 > ⚠️ **テストモード限定運用**。`sk_test_` / `whsec_` のみを使用し、本番(live)キー・実カードは扱いません。キーはコミットせず環境変数で渡します。
 
-## 次の一手（拡張候補）
+## デプロイ
 
-- 決済確定（Webhook）時に在庫を引き当てる方式へ（現状は checkout 時に減算）
+本番は **Oracle Cloud の VM 上で Docker Compose**（Caddy がリバースプロキシ）で動いており、`APP_CONTEXT_PATH=/ec` を渡して <https://lab.4510.be/ec/> に配信しています。`main` への push で自動デプロイされます（デプロイ定義はインフラ側の別リポジトリ）。
+
+コンテナ1つで完結するので、Dockerfile がそのまま使える環境（Render / Fly.io / Cloud Run 等）にも載ります。
+
+## 今後の拡張候補
+
 - 商品画像アップロード、レビュー、在庫のペシミスティックロック
+- 管理パネルの対象拡張（商品・カテゴリ・注文は現状 Swagger / curl から操作）
 - Flyway でマイグレーション管理、統合テスト（Testcontainers）
