@@ -105,23 +105,56 @@ public class DataSeeder implements CommandLineRunner {
         }
     }
 
+    /**
+     * 和雑貨セレクトショップを想定したデモカタログ。
+     *
+     * <p>飲食料品（日本茶・和菓子）を <b>軽減税率8%</b>、器と雑貨を <b>標準税率10%</b> に
+     * 割り当ててあるのは意図的で、1つのカートに両方が入ると税区分ごとの内訳が出る。
+     * 実装済みの消費税計算（区分別・注文時スナップショット）がデモ上で目に見える。
+     *
+     * <p>価格は内税（{@code INCLUSIVE}）前提の税込価格。税抜がちょうど整数になる値を選んで
+     * あるので、内訳表示の検算がしやすい（例: 1,620円 = 1,500円 + 8%）。
+     *
+     * <p>画像は外部サービスではなく同梱SVG（`static/images/products/`）。相対パスなので
+     * サブパス配信（本番の `/ec/`）でもフロント側で基準URLが補われる。
+     */
     private void seedCatalog() {
-        Category apparel = category("Apparel", "apparel");
-        Category electronics = category("Electronics", "electronics");
-        Category books = category("Books", "books");
+        Category tea = category("日本茶", "tea");
+        Category sweets = category("和菓子", "wagashi");
+        Category tableware = category("和食器", "tableware");
+        Category crafts = category("和雑貨", "crafts");
 
-        product("Classic T-Shirt", "Soft cotton crew-neck tee.", "2480", 120, apparel,
-                "https://picsum.photos/seed/tshirt/600/400");
-        product("Denim Jacket", "Vintage-wash denim jacket.", "8900", 30, apparel,
-                "https://picsum.photos/seed/denim/600/400");
-        product("Wireless Earbuds", "Bluetooth 5.3, noise isolation.", "6980", 45, electronics,
-                "https://picsum.photos/seed/earbuds/600/400");
-        product("USB-C Charger 65W", "GaN fast charger, compact.", "3480", 80, electronics,
-                "https://picsum.photos/seed/charger/600/400");
-        product("Clean Code", "A handbook of agile software craftsmanship.", "4200", 25, books,
-                "https://picsum.photos/seed/cleancode/600/400");
-        product("The Pragmatic Programmer", "Your journey to mastery.", "3960", 18, books,
-                "https://picsum.photos/seed/pragprog/600/400");
+        // --- 日本茶（軽減8%）---
+        product("宇治抹茶 30g", "石臼挽きの宇治抹茶。薄茶から濃茶まで、点てて香りの立つ一番茶仕立て。",
+                "1620", 60, tea, TaxCategory.REDUCED, "matcha.svg");
+        product("玉露 100g", "覆下栽培でうまみを引き出した高級煎茶。ぬるめのお湯でゆっくりと。",
+                "3240", 35, tea, TaxCategory.REDUCED, "gyokuro.svg");
+        product("ほうじ茶 200g", "強火で焙じた香ばしい茶葉。カフェインが穏やかで食後や就寝前にも。",
+                "1080", 90, tea, TaxCategory.REDUCED, "houjicha.svg");
+
+        // --- 和菓子（軽減8%）---
+        product("本練羊羹 中棹", "北海道産小豆と寒天だけで炊き上げた本練羊羹。濃いめのお茶とともに。",
+                "1296", 48, sweets, TaxCategory.REDUCED, "yokan.svg");
+        product("最中 詰合せ 6個", "香ばしい皮と粒餡の最中。皮と餡が別包装で、食べる直前に挟めます。",
+                "1512", 40, sweets, TaxCategory.REDUCED, "monaka.svg");
+
+        // --- 和食器（標準10%）---
+        product("藍染湯呑み 二客組", "呉須の藍が美しい波紋の湯呑み。手に馴染む大小の夫婦湯呑みです。",
+                "2750", 25, tableware, TaxCategory.STANDARD, "yunomi.svg");
+        product("越前塗 汁椀", "木地に漆を重ねた汁椀。熱を伝えにくく、口当たりがやわらかです。",
+                "4950", 18, tableware, TaxCategory.STANDARD, "shiruwan.svg");
+        product("若狭塗箸 一膳", "研ぎ出しの模様が一膳ごとに異なる塗り箸。先細加工でつまみやすい。",
+                "1980", 70, tableware, TaxCategory.STANDARD, "hashi.svg");
+
+        // --- 和雑貨（標準10%）---
+        product("京扇子 桜文", "職人が一本ずつ仕上げた京扇子。桜をあしらった夏の贈り物に。",
+                "5500", 22, crafts, TaxCategory.STANDARD, "sensu.svg");
+        product("綿風呂敷 麻の葉 90cm", "一升瓶も包める大判サイズ。バッグにも仕立てられる綿の風呂敷。",
+                "2200", 55, crafts, TaxCategory.STANDARD, "furoshiki.svg");
+        product("注染手ぬぐい 二枚組", "手ぬぐい特有の裏表のない染め。使うほどに柔らかくなります。",
+                "1320", 80, crafts, TaxCategory.STANDARD, "tenugui.svg");
+        product("招き猫 三毛 中", "右手を上げた金運招福の招き猫。小判を抱えた縁起物の定番です。",
+                "3850", 30, crafts, TaxCategory.STANDARD, "manekineko.svg");
     }
 
     private Category category(String name, String slug) {
@@ -131,14 +164,17 @@ public class DataSeeder implements CommandLineRunner {
         return categoryRepository.save(c);
     }
 
-    private void product(String name, String desc, String price, int stock, Category category, String imageUrl) {
+    /** @param image `static/images/products/` 配下のファイル名（相対パスで保存する） */
+    private void product(String name, String desc, String price, int stock, Category category,
+                         TaxCategory taxCategory, String image) {
         Product p = new Product();
         p.setName(name);
         p.setDescription(desc);
         p.setPrice(new BigDecimal(price));
         p.setStock(stock);
         p.setCategory(category);
-        p.setImageUrl(imageUrl);
+        p.setTaxCategory(taxCategory);
+        p.setImageUrl("images/products/" + image);
         productRepository.save(p);
     }
 }

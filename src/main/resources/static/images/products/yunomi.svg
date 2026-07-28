@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" width="600" height="400" role="img" aria-label="湯呑み">
+  <defs>
+    <pattern id="ysei" width="60" height="30" patternUnits="userSpaceOnUse">
+      <path d="M0 30 A30 30 0 0 1 60 30 M-30 30 A30 30 0 0 1 30 30 M30 30 A30 30 0 0 1 90 30"
+            fill="none" stroke="#274a78" stroke-width="1.4"/>
+    </pattern>
+  </defs>
+  <rect width="600" height="400" fill="#eef1f6"/>
+  <rect width="600" height="400" fill="url(#ysei)" opacity=".2"/>
+
+  <!-- 小さい湯呑み（奥） -->
+  <g opacity=".92">
+    <path d="M404 214 L416 300 Q456 314 496 300 L508 214 Z" fill="#31598c"/>
+    <path d="M456 308 Q480 306 496 300 L508 214 L456 214 Z" fill="#274a78"/>
+    <ellipse cx="456" cy="214" rx="52" ry="15" fill="#1f3c62"/>
+    <ellipse cx="456" cy="214" rx="43" ry="11" fill="#f3f5f8"/>
+    <path d="M410 254 L502 254 L500 266 L412 266 Z" fill="#f3f5f8" opacity=".85"/>
+  </g>
+
+  <!-- 主役の湯呑み -->
+  <g>
+    <path d="M170 168 L192 316 Q272 340 352 316 L374 168 Z" fill="#31598c"/>
+    <path d="M272 332 Q316 330 352 316 L374 168 L272 168 Z" fill="#274a78"/>
+    <ellipse cx="272" cy="168" rx="102" ry="28" fill="#1f3c62"/>
+    <ellipse cx="272" cy="168" rx="88" ry="22" fill="#f3f5f8"/>
+    <ellipse cx="272" cy="170" rx="88" ry="22" fill="#dfe6ef"/>
+    <ellipse cx="272" cy="168" rx="88" ry="22" fill="#eef2f7"/>
+    <!-- 白の帯と波 -->
+    <path d="M180 238 L364 238 L360 262 L184 262 Z" fill="#f3f5f8"/>
+    <path d="M188 254 Q206 240 224 254 Q242 268 260 254 Q278 240 296 254 Q314 268 332 254 Q346 243 356 250"
+          fill="none" stroke="#31598c" stroke-width="4" stroke-linecap="round"/>
+    <!-- 高台 -->
+    <path d="M226 330 L226 344 Q272 352 318 344 L318 330 Z" fill="#1f3c62"/>
+  </g>
+</svg>

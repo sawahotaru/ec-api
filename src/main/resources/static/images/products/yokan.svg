@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" width="600" height="400" role="img" aria-label="羊羹">
+  <defs>
+    <pattern id="seigaiha" width="60" height="30" patternUnits="userSpaceOnUse">
+      <path d="M0 30 A30 30 0 0 1 60 30 M-30 30 A30 30 0 0 1 30 30 M30 30 A30 30 0 0 1 90 30"
+            fill="none" stroke="#8a6f8e" stroke-width="1.4"/>
+    </pattern>
+  </defs>
+  <rect width="600" height="400" fill="#f6f1f2"/>
+  <rect width="600" height="400" fill="url(#seigaiha)" opacity=".2"/>
+
+  <!-- 黒文字皿 -->
+  <ellipse cx="300" cy="306" rx="196" ry="46" fill="#ddd3d6"/>
+  <ellipse cx="300" cy="298" rx="196" ry="46" fill="#efe8ea"/>
+
+  <!-- 羊羹スライス3切れ -->
+  <g>
+    <!-- 奥 -->
+    <path d="M186 246 L186 202 L292 178 L292 222 Z" fill="#4a2d3f"/>
+    <path d="M292 222 L292 178 L346 196 L346 240 Z" fill="#3a2231"/>
+    <path d="M186 202 L292 178 L346 196 L240 220 Z" fill="#5d3b4f"/>
+    <!-- 手前 -->
+    <path d="M232 300 L232 250 L344 224 L344 274 Z" fill="#4a2d3f"/>
+    <path d="M344 274 L344 224 L400 244 L400 294 Z" fill="#3a2231"/>
+    <path d="M232 250 L344 224 L400 244 L288 270 Z" fill="#634054"/>
+    <!-- 寒天の艶 -->
+    <path d="M248 252 L338 231 L352 236 L262 257 Z" fill="#7d5a6e" opacity=".55"/>
+  </g>
+
+  <!-- 楊枝 -->
+  <path d="M404 300 L500 262" stroke="#6b4a2f" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="504" cy="260" r="7" fill="#6b4a2f"/>
+</svg>

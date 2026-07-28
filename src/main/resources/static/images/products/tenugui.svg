@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" width="600" height="400" role="img" aria-label="手ぬぐい">
+  <rect width="600" height="400" fill="#f4f6f4"/>
+
+  <!-- 竿 -->
+  <rect x="60" y="52" width="480" height="12" rx="6" fill="#a3805c"/>
+  <rect x="60" y="52" width="480" height="5" rx="3" fill="#c39c72"/>
+
+  <!-- 手ぬぐい（左・藍の縞） -->
+  <g>
+    <path d="M132 64 L282 64 L276 330 Q204 346 138 330 Z" fill="#f5f7f6"/>
+    <path d="M212 64 L282 64 L276 330 Q246 338 212 338 Z" fill="#e6eae9"/>
+    <g fill="#274a78">
+      <path d="M144 110 L272 110 L271 126 L145 126 Z"/>
+      <path d="M145 150 L271 150 L270 158 L146 158 Z"/>
+      <path d="M146 176 L270 176 L269 192 L147 192 Z"/>
+      <path d="M147 216 L269 216 L268 224 L148 224 Z"/>
+      <path d="M148 242 L268 242 L267 258 L149 258 Z"/>
+    </g>
+    <!-- 端の縫い目 -->
+    <path d="M139 322 Q206 338 276 322" fill="none" stroke="#c9d2de" stroke-width="2.4" stroke-dasharray="7 6"/>
+  </g>
+
+  <!-- 手ぬぐい（右・波と千鳥） -->
+  <g>
+    <path d="M320 64 L470 64 L464 312 Q392 330 326 312 Z" fill="#faf7ee"/>
+    <path d="M400 64 L470 64 L464 312 Q434 320 400 320 Z" fill="#efeade"/>
+    <g fill="none" stroke="#00a3af" stroke-width="4.5" stroke-linecap="round">
+      <path d="M334 128 Q358 110 382 128 Q406 146 430 128 Q446 116 456 122"/>
+      <path d="M334 176 Q358 158 382 176 Q406 194 430 176 Q446 164 456 170"/>
+      <path d="M332 264 Q356 246 380 264 Q404 282 428 264 Q444 252 454 258"/>
+    </g>
+    <!-- 千鳥 -->
+    <g fill="#e35b2e">
+      <path d="M356 216 q14 -12 26 -2 q10 -10 18 2 q-8 14 -22 14 q-16 0 -22 -14 Z"/>
+      <path d="M414 224 q11 -9 20 -1 q8 -8 14 1 q-6 11 -17 11 q-12 0 -17 -11 Z" opacity=".85"/>
+    </g>
+    <path d="M327 304 Q394 320 464 304" fill="none" stroke="#ded7c6" stroke-width="2.4" stroke-dasharray="7 6"/>
+  </g>
+
+  <!-- 洗濯ばさみ -->
+  <g fill="#b7bdb9">
+    <rect x="198" y="56" width="14" height="26" rx="4"/>
+    <rect x="386" y="56" width="14" height="26" rx="4"/>
+  </g>
+</svg>

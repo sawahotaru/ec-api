@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" width="600" height="400" role="img" aria-label="招き猫">
+  <defs>
+    <pattern id="nsei" width="60" height="30" patternUnits="userSpaceOnUse">
+      <path d="M0 30 A30 30 0 0 1 60 30 M-30 30 A30 30 0 0 1 30 30 M30 30 A30 30 0 0 1 90 30"
+            fill="none" stroke="#d4a03a" stroke-width="1.4"/>
+    </pattern>
+  </defs>
+  <rect width="600" height="400" fill="#fdf6e3"/>
+  <rect width="600" height="400" fill="url(#nsei)" opacity=".18"/>
+
+  <!-- 座布団 -->
+  <ellipse cx="300" cy="344" rx="140" ry="26" fill="#c0392b"/>
+  <ellipse cx="300" cy="338" rx="140" ry="26" fill="#e04b3a"/>
+
+  <!-- 胴 -->
+  <path d="M196 338 Q186 232 246 200 L354 200 Q414 232 404 338 Z" fill="#f2f2ef"/>
+  <path d="M300 200 Q414 232 404 338 L300 338 Z" fill="#e6e6e2"/>
+
+  <!-- 上げ手（右前脚） -->
+  <g>
+    <path d="M372 214 Q404 168 396 130 Q390 100 362 106 Q340 112 344 142 Q348 176 336 210 Z" fill="#f2f2ef"/>
+    <ellipse cx="372" cy="120" rx="30" ry="27" fill="#f8f8f6"/>
+    <ellipse cx="372" cy="124" rx="16" ry="12" fill="#f3b7b1"/>
+  </g>
+  <!-- 下ろした手 -->
+  <ellipse cx="236" cy="298" rx="30" ry="22" fill="#f8f8f6"/>
+  <ellipse cx="236" cy="300" rx="15" ry="10" fill="#f3b7b1"/>
+
+  <!-- 小判 -->
+  <g>
+    <ellipse cx="300" cy="286" rx="72" ry="34" fill="#d4a03a"/>
+    <ellipse cx="300" cy="282" rx="72" ry="34" fill="#f0c04e"/>
+    <ellipse cx="300" cy="282" rx="52" ry="20" fill="#d9a83c"/>
+    <path d="M276 276 h48 M276 288 h48" stroke="#a87c22" stroke-width="4" stroke-linecap="round"/>
+  </g>
+
+  <!-- 頭 -->
+  <ellipse cx="300" cy="164" rx="92" ry="80" fill="#f8f8f6"/>
+  <!-- 耳 -->
+  <path d="M228 112 L214 52 L272 84 Z" fill="#f8f8f6"/>
+  <path d="M235 106 L228 72 L258 89 Z" fill="#f3b7b1"/>
+  <path d="M372 112 L386 52 L328 84 Z" fill="#f8f8f6"/>
+  <path d="M365 106 L372 72 L342 89 Z" fill="#f3b7b1"/>
+  <!-- 三毛の斑 -->
+  <path d="M330 96 Q368 84 382 118 Q352 128 330 96 Z" fill="#e6a23c"/>
+  <path d="M222 140 Q246 116 268 132 Q248 156 222 140 Z" fill="#3a3634"/>
+  <!-- 顔 -->
+  <ellipse cx="268" cy="158" rx="9" ry="12" fill="#2b2b2b"/>
+  <ellipse cx="332" cy="158" rx="9" ry="12" fill="#2b2b2b"/>
+  <path d="M292 186 q8 8 16 0" fill="none" stroke="#2b2b2b" stroke-width="4" stroke-linecap="round"/>
+  <path d="M300 178 l-9 8 h18 Z" fill="#f3b7b1"/>
+  <ellipse cx="248" cy="192" rx="18" ry="11" fill="#f3b7b1" opacity=".6"/>
+  <ellipse cx="352" cy="192" rx="18" ry="11" fill="#f3b7b1" opacity=".6"/>
+  <g stroke="#b9b6ae" stroke-width="3" stroke-linecap="round">
+    <path d="M232 176 L182 166 M232 188 L184 190"/>
+    <path d="M368 176 L418 166 M368 188 L416 190"/>
+  </g>
+
+  <!-- 首輪と鈴 -->
+  <path d="M232 226 Q300 258 368 226 L364 246 Q300 276 236 246 Z" fill="#c0392b"/>
+  <circle cx="300" cy="264" r="19" fill="#f0c04e"/>
+  <circle cx="300" cy="264" r="19" fill="none" stroke="#a87c22" stroke-width="2"/>
+  <path d="M288 264 h24 M300 254 v6" stroke="#a87c22" stroke-width="3.4" stroke-linecap="round"/>
+</svg>

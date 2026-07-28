@@ -12,6 +12,15 @@ const yen = (n) => "¥" + Number(n || 0).toLocaleString("ja-JP", { maximumFracti
 const SELF = document.currentScript || document.scripts[document.scripts.length - 1];
 const BASE = new URL("..", SELF.src).pathname.replace(/\/$/, "");
 
+// 商品画像は同梱SVG（相対パス "images/products/x.svg"）でも、外部URLでも受け付ける。
+// 相対パスは BASE で解決する — CSS の url() は「ドキュメントURL基準」で、ハッシュ
+// ルーティングやサブパス配信（/ec/）だと素の相対パスでは狙った先を指さないため。
+function imageStyle(url) {
+    if (!url) return "";
+    const src = /^(https?:)?\/\//.test(url) || url.startsWith("/") ? url : `${BASE}/${url}`;
+    return `background-image:url('${src}')`;
+}
+
 const state = {
     token: localStorage.getItem("ec_token") || null,
     user: null,
@@ -143,7 +152,7 @@ function renderProducts(products) {
         // Fall back to stock for older API responses that lack the field.
         const avail = (p.available != null) ? p.available : p.stock;
         const out = avail <= 0;
-        const img = p.imageUrl ? `background-image:url('${p.imageUrl}')` : "";
+        const img = imageStyle(p.imageUrl);
         // Thumbnail and name link to the detail page (#/product/{id}); the router handles it.
         return `
         <article class="card">
@@ -228,7 +237,7 @@ async function showDetail(id) {
 function renderDetail(p) {
     const avail = (p.available != null) ? p.available : p.stock;
     const out = avail <= 0;
-    const img = p.imageUrl ? `background-image:url('${p.imageUrl}')` : "";
+    const img = imageStyle(p.imageUrl);
     $("#productDetail").innerHTML = `
         <a href="#/" class="back-link">← 商品一覧へ戻る</a>
         <div class="detail-grid">
@@ -600,7 +609,7 @@ function renderCart(cart) {
     } else {
         box.innerHTML = items.map((it) => {
             const p = it.product;
-            const img = p.imageUrl ? `background-image:url('${p.imageUrl}')` : "";
+            const img = imageStyle(p.imageUrl);
             return `
             <div class="line">
                 <div class="lthumb" style="${img}"></div>

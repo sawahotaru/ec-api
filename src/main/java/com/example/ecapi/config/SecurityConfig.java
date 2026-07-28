@@ -36,6 +36,7 @@ public class SecurityConfig {
                                 "/favicon.ico",
                                 "/css/**",
                                 "/js/**",
+                                "/images/**",
                                 "/assets/**",
                                 "/api/auth/**",
                                 "/api/orders/guest-checkout",

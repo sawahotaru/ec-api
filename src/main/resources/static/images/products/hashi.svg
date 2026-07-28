@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" width="600" height="400" role="img" aria-label="塗り箸">
+  <defs>
+    <pattern id="hstripe" width="20" height="20" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+      <rect width="10" height="20" fill="#9a3b33"/>
+    </pattern>
+  </defs>
+  <rect width="600" height="400" fill="#f8f0ea"/>
+  <rect width="600" height="400" fill="url(#hstripe)" opacity=".1"/>
+
+  <!-- 箸置き -->
+  <g>
+    <ellipse cx="300" cy="286" rx="66" ry="24" fill="#c9c2b6"/>
+    <ellipse cx="300" cy="280" rx="66" ry="24" fill="#e3ddd2"/>
+    <ellipse cx="300" cy="276" rx="44" ry="13" fill="#cfc7ba"/>
+  </g>
+
+  <!-- 箸 2本 -->
+  <g transform="rotate(-9 300 250)">
+    <!-- 奥 -->
+    <path d="M92 244 L500 214 L504 228 L94 258 Z" fill="#8e2f28"/>
+    <path d="M418 219 L500 214 L504 228 L422 233 Z" fill="#1d1a19"/>
+    <path d="M92 244 L500 214 L500 219 L92 249 Z" fill="#b04a3f" opacity=".8"/>
+    <!-- 金の帯 -->
+    <rect x="196" y="228" width="8" height="14" fill="#c9a349" transform="rotate(-4 200 235)"/>
+    <rect x="216" y="226" width="4" height="14" fill="#c9a349" transform="rotate(-4 218 233)"/>
+  </g>
+  <g transform="rotate(-2 300 292)">
+    <!-- 手前 -->
+    <path d="M92 300 L500 276 L504 292 L94 316 Z" fill="#1f1c1b"/>
+    <path d="M418 280 L500 276 L504 292 L422 296 Z" fill="#8e2f28"/>
+    <path d="M92 300 L500 276 L500 282 L92 306 Z" fill="#3b3634" opacity=".85"/>
+    <rect x="196" y="290" width="8" height="14" fill="#c9a349" transform="rotate(-3 200 297)"/>
+    <rect x="216" y="289" width="4" height="14" fill="#c9a349" transform="rotate(-3 218 296)"/>
+  </g>
+</svg>

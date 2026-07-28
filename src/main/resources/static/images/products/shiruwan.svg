@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" width="600" height="400" role="img" aria-label="汁椀">
+  <defs>
+    <pattern id="kiku" width="44" height="44" patternUnits="userSpaceOnUse">
+      <circle cx="22" cy="22" r="9" fill="none" stroke="#b8963f" stroke-width="1.2"/>
+      <circle cx="22" cy="22" r="3" fill="#b8963f"/>
+    </pattern>
+  </defs>
+  <rect width="600" height="400" fill="#f7f2e8"/>
+  <rect width="600" height="400" fill="url(#kiku)" opacity=".16"/>
+
+  <!-- 敷板 -->
+  <rect x="90" y="316" width="420" height="18" rx="4" fill="#8a6a49"/>
+  <rect x="90" y="310" width="420" height="12" rx="4" fill="#a3805c"/>
+
+  <!-- 椀（黒漆・朱内） -->
+  <ellipse cx="300" cy="176" rx="152" ry="40" fill="#1d1a19"/>
+  <ellipse cx="300" cy="178" rx="140" ry="34" fill="#a8322a"/>
+  <ellipse cx="300" cy="176" rx="140" ry="34" fill="#c03b30"/>
+  <path d="M148 176 Q160 312 300 312 Q440 312 452 176 Q452 210 300 218 Q148 210 148 176 Z" fill="#1d1a19"/>
+  <path d="M300 312 Q400 312 440 250 Q380 288 300 290 Z" fill="#332e2c"/>
+  <!-- 金の口縁 -->
+  <path d="M148 176 A152 40 0 0 1 452 176" fill="none" stroke="#c9a349" stroke-width="6"/>
+  <!-- 蒔絵風の意匠 -->
+  <g fill="#c9a349" opacity=".9">
+    <circle cx="300" cy="252" r="16"/>
+    <circle cx="300" cy="252" r="9" fill="#1d1a19"/>
+    <path d="M232 268 q22 -16 44 0 q-22 12 -44 0 Z"/>
+    <path d="M324 268 q22 -16 44 0 q-22 12 -44 0 Z"/>
+  </g>
+  <!-- 高台 -->
+  <path d="M244 312 L244 328 Q300 338 356 328 L356 312 Z" fill="#151312"/>
+</svg>
