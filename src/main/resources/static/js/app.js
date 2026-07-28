@@ -12,7 +12,7 @@ const yen = (n) => "¥" + Number(n || 0).toLocaleString("ja-JP", { maximumFracti
 const SELF = document.currentScript || document.scripts[document.scripts.length - 1];
 const BASE = new URL("..", SELF.src).pathname.replace(/\/$/, "");
 
-// 商品画像は同梱SVG（相対パス "images/products/x.svg"）でも、外部URLでも受け付ける。
+// 商品画像は同梱画像（相対パス "images/products/x.jpg"）でも、外部URLでも受け付ける。
 // 相対パスは BASE で解決する — CSS の url() は「ドキュメントURL基準」で、ハッシュ
 // ルーティングやサブパス配信（/ec/）だと素の相対パスでは狙った先を指さないため。
 function imageStyle(url) {

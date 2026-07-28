@@ -115,8 +115,8 @@ public class DataSeeder implements CommandLineRunner {
      * <p>価格は内税（{@code INCLUSIVE}）前提の税込価格。税抜がちょうど整数になる値を選んで
      * あるので、内訳表示の検算がしやすい（例: 1,620円 = 1,500円 + 8%）。
      *
-     * <p>画像は外部サービスではなく同梱SVG（`static/images/products/`）。相対パスなので
-     * サブパス配信（本番の `/ec/`）でもフロント側で基準URLが補われる。
+     * <p>画像は外部サービスではなく同梱JPEG（`static/images/products/`・1200x800＝表示の3:2）。
+     * 相対パスなのでサブパス配信（本番の `/ec/`）でもフロント側で基準URLが補われる。
      */
     private void seedCatalog() {
         Category tea = category("日本茶", "tea");
@@ -126,35 +126,35 @@ public class DataSeeder implements CommandLineRunner {
 
         // --- 日本茶（軽減8%）---
         product("宇治抹茶 30g", "石臼挽きの宇治抹茶。薄茶から濃茶まで、点てて香りの立つ一番茶仕立て。",
-                "1620", 60, tea, TaxCategory.REDUCED, "matcha.svg");
+                "1620", 60, tea, TaxCategory.REDUCED, "matcha.jpg");
         product("玉露 100g", "覆下栽培でうまみを引き出した高級煎茶。ぬるめのお湯でゆっくりと。",
-                "3240", 35, tea, TaxCategory.REDUCED, "gyokuro.svg");
+                "3240", 35, tea, TaxCategory.REDUCED, "gyokuro.jpg");
         product("ほうじ茶 200g", "強火で焙じた香ばしい茶葉。カフェインが穏やかで食後や就寝前にも。",
-                "1080", 90, tea, TaxCategory.REDUCED, "houjicha.svg");
+                "1080", 90, tea, TaxCategory.REDUCED, "houjicha.jpg");
 
         // --- 和菓子（軽減8%）---
         product("本練羊羹 中棹", "北海道産小豆と寒天だけで炊き上げた本練羊羹。濃いめのお茶とともに。",
-                "1296", 48, sweets, TaxCategory.REDUCED, "yokan.svg");
+                "1296", 48, sweets, TaxCategory.REDUCED, "yokan.jpg");
         product("最中 詰合せ 6個", "香ばしい皮と粒餡の最中。皮と餡が別包装で、食べる直前に挟めます。",
-                "1512", 40, sweets, TaxCategory.REDUCED, "monaka.svg");
+                "1512", 40, sweets, TaxCategory.REDUCED, "monaka.jpg");
 
         // --- 和食器（標準10%）---
         product("藍染湯呑み 二客組", "呉須の藍が美しい波紋の湯呑み。手に馴染む大小の夫婦湯呑みです。",
-                "2750", 25, tableware, TaxCategory.STANDARD, "yunomi.svg");
+                "2750", 25, tableware, TaxCategory.STANDARD, "yunomi.jpg");
         product("越前塗 汁椀", "木地に漆を重ねた汁椀。熱を伝えにくく、口当たりがやわらかです。",
-                "4950", 18, tableware, TaxCategory.STANDARD, "shiruwan.svg");
+                "4950", 18, tableware, TaxCategory.STANDARD, "shiruwan.jpg");
         product("若狭塗箸 一膳", "研ぎ出しの模様が一膳ごとに異なる塗り箸。先細加工でつまみやすい。",
-                "1980", 70, tableware, TaxCategory.STANDARD, "hashi.svg");
+                "1980", 70, tableware, TaxCategory.STANDARD, "hashi.jpg");
 
         // --- 和雑貨（標準10%）---
         product("京扇子 桜文", "職人が一本ずつ仕上げた京扇子。桜をあしらった夏の贈り物に。",
-                "5500", 22, crafts, TaxCategory.STANDARD, "sensu.svg");
+                "5500", 22, crafts, TaxCategory.STANDARD, "sensu.jpg");
         product("綿風呂敷 麻の葉 90cm", "一升瓶も包める大判サイズ。バッグにも仕立てられる綿の風呂敷。",
-                "2200", 55, crafts, TaxCategory.STANDARD, "furoshiki.svg");
+                "2200", 55, crafts, TaxCategory.STANDARD, "furoshiki.jpg");
         product("注染手ぬぐい 二枚組", "手ぬぐい特有の裏表のない染め。使うほどに柔らかくなります。",
-                "1320", 80, crafts, TaxCategory.STANDARD, "tenugui.svg");
-        product("招き猫 三毛 中", "右手を上げた金運招福の招き猫。小判を抱えた縁起物の定番です。",
-                "3850", 30, crafts, TaxCategory.STANDARD, "manekineko.svg");
+                "1320", 80, crafts, TaxCategory.STANDARD, "tenugui.jpg");
+        product("黒猫武将 こてつ", "三日月兜をかぶった黒猫武将の、ちょっと得意げなデスクトップ人形。",
+                "3850", 30, crafts, TaxCategory.STANDARD, "kotetsu.jpg");
     }
 
     private Category category(String name, String slug) {
