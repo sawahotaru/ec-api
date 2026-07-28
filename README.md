@@ -4,7 +4,7 @@ ECサイトに必要な主要機能を一通り備えた、コンパクトな実
 
 **▶ 公開デモ: <https://lab.4510.be/ec/>** （API 仕様は <https://lab.4510.be/ec/swagger-ui.html>）
 
-![ストアフロント](assets/screenshot.png)
+![ストアフロント](assets/screenshot.jpg)
 
 ## 技術構成
 
