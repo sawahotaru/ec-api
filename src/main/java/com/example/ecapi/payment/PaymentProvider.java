@@ -52,14 +52,21 @@ public interface PaymentProvider {
      * まったく違う（Stripeは {@code Stripe-Signature} のHMAC、他社はIP制限やBasic認証）ので、
      * コアに持たせると必ず業者依存が漏れる。
      *
+     * <p>既定実装は<strong>拒否</strong>する。「コールバック経路を持たない手段」（銀行振込・
+     * 代金引換）と「実装済みだがこのイベントには関心がない」は別物で、後者だけが
+     * {@link Optional#empty()} を返す。既定を空にすると、前者の Webhook URL が認証なしで
+     * 200 を返す“何もしない生きたエンドポイント”として公開されてしまう。
+     *
      * @param payload 生のリクエストボディ（署名検証のためパース前の文字列で渡す）
      * @param headers 大文字小文字を区別しないヘッダマップ
      * @return 支払いが確定したなら対象注文を含む {@link PaymentCallback}。
      *         関心のないイベント（発送通知など）なら {@link Optional#empty()}。
-     * @throws com.example.ecapi.exception.BadRequestException 署名が不正な場合
+     * @throws com.example.ecapi.exception.BadRequestException 署名が不正な場合、
+     *         またはこの決済手段がコールバックを持たない場合
      */
     default Optional<PaymentCallback> handleCallback(String payload, Map<String, String> headers) {
-        return Optional.empty();
+        throw new com.example.ecapi.exception.BadRequestException(
+                "Payment provider '" + id() + "' has no callback endpoint");
     }
 
     /**

@@ -187,7 +187,6 @@ curl -s -X POST "$BASE/api/payments/orders/1/checkout-session?provider=stripe" \
 
 Webhook は `POST /api/payments/{providerId}/webhook`（署名検証は各実装の中で完結）。
 Stripe のローカル転送は Stripe CLI: `stripe listen --forward-to localhost:<Port>/api/payments/stripe/webhook`
-※ 旧 URL `/api/payments/webhook` も Stripe 用として互換保持しています。
 
 テストカードは **`4242 4242 4242 4242`**（有効期限=任意の未来 / CVC=任意）。
 

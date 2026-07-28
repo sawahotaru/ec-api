@@ -71,18 +71,6 @@ public class PaymentController {
         return ResponseEntity.ok("ok");
     }
 
-    /**
-     * 旧 Stripe Webhook URL。<strong>Stripe ダッシュボードに既に登録されている</strong>ため
-     * 互換のために残してある（新規は {@code /api/payments/stripe/webhook} を使うこと）。
-     */
-    @Operation(summary = "[非推奨] 旧 Stripe Webhook URL", deprecated = true)
-    @PostMapping("/webhook")
-    public ResponseEntity<String> legacyStripeWebhook(@RequestBody String payload,
-                                                      HttpServletRequest request) {
-        paymentService.handleCallback("stripe", payload, headersOf(request));
-        return ResponseEntity.ok("ok");
-    }
-
     @Operation(summary = "外部決済ページを持たない手段の案内ページ（銀行振込の振込先など）",
             description = "会員はログイン、ゲストは token が必要。")
     @GetMapping(value = "/{providerId}/instructions", produces = MediaType.TEXT_HTML_VALUE)
