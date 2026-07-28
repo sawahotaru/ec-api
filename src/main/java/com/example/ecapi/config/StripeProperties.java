@@ -3,14 +3,17 @@ package com.example.ecapi.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
-/** Binds app.stripe.* — TEST MODE keys only. */
+/**
+ * Binds app.stripe.* — TEST MODE keys only.
+ * 通貨は決済業者ではなくストアの属性なので {@code app.payment.currency}
+ * （{@link com.example.ecapi.payment.PaymentProperties}）へ移した。
+ */
 @Component
 @ConfigurationProperties(prefix = "app.stripe")
 public class StripeProperties {
 
     private String secretKey = "";
     private String webhookSecret = "";
-    private String currency = "jpy";
     private String successUrl;
     private String cancelUrl;
 
@@ -28,14 +31,6 @@ public class StripeProperties {
 
     public void setWebhookSecret(String webhookSecret) {
         this.webhookSecret = webhookSecret;
-    }
-
-    public String getCurrency() {
-        return currency;
-    }
-
-    public void setCurrency(String currency) {
-        this.currency = currency;
     }
 
     public String getSuccessUrl() {

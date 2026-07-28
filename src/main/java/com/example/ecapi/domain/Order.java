@@ -67,8 +67,18 @@ public class Order {
     @Column(nullable = false)
     private PricingMode pricingMode = PricingMode.INCLUSIVE;
 
-    /** Stripe Checkout Session id (test mode). Null until a payment is initiated. */
-    private String stripeSessionId;
+    /**
+     * どの決済手段で支払われた（支払おうとした）か —— {@code PaymentProvider#id()} の値
+     * （{@code "stripe"} / {@code "bank_transfer"}）。支払い開始前、および管理者が手動で
+     * PAID にした場合は null。
+     *
+     * <p>以前はここが {@code stripeSessionId} という Stripe 固有のカラムだった。決済業者名が
+     * 注文テーブルのスキーマに焼き付いている状態だったため、汎用の2カラムに置き換えている。
+     */
+    private String paymentProvider;
+
+    /** 決済側の参照ID（Stripe の Checkout Session id、銀行振込の照合番号など）。照合用。 */
+    private String paymentReference;
 
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.EAGER)
     private List<OrderItem> items = new ArrayList<>();
@@ -158,12 +168,20 @@ public class Order {
         this.pricingMode = pricingMode;
     }
 
-    public String getStripeSessionId() {
-        return stripeSessionId;
+    public String getPaymentProvider() {
+        return paymentProvider;
     }
 
-    public void setStripeSessionId(String stripeSessionId) {
-        this.stripeSessionId = stripeSessionId;
+    public void setPaymentProvider(String paymentProvider) {
+        this.paymentProvider = paymentProvider;
+    }
+
+    public String getPaymentReference() {
+        return paymentReference;
+    }
+
+    public void setPaymentReference(String paymentReference) {
+        this.paymentReference = paymentReference;
     }
 
     public List<OrderItem> getItems() {

@@ -1,196 +1,134 @@
 package com.example.ecapi.service;
 
-import com.example.ecapi.config.StripeProperties;
 import com.example.ecapi.domain.Order;
-import com.example.ecapi.domain.OrderItem;
 import com.example.ecapi.domain.OrderStatus;
 import com.example.ecapi.domain.User;
 import com.example.ecapi.dto.PaymentDtos.CheckoutSessionResponse;
+import com.example.ecapi.dto.PaymentDtos.PaymentProviderInfo;
 import com.example.ecapi.exception.BadRequestException;
 import com.example.ecapi.exception.NotFoundException;
+import com.example.ecapi.payment.CheckoutSession;
+import com.example.ecapi.payment.PaymentProperties;
+import com.example.ecapi.payment.PaymentProvider;
+import com.example.ecapi.payment.PaymentProviderRegistry;
 import com.example.ecapi.repository.OrderRepository;
-import com.example.ecapi.repository.ProductRepository;
-import com.stripe.exception.EventDataObjectDeserializationException;
-import com.stripe.exception.SignatureVerificationException;
-import com.stripe.exception.StripeException;
-import com.stripe.model.Event;
-import com.stripe.model.EventDataObjectDeserializer;
-import com.stripe.model.StripeObject;
-import com.stripe.model.checkout.Session;
-import com.stripe.net.RequestOptions;
-import com.stripe.net.Webhook;
-import com.stripe.param.checkout.SessionCreateParams;
-import java.math.BigDecimal;
-import java.util.Set;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.List;
+import java.util.Map;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
 /**
- * Stripe Checkout integration (TEST MODE). Creates a hosted Checkout Session for a
- * PENDING order and marks the order PAID when Stripe confirms via webhook.
+ * 決済の<em>手順</em>だけを持つ調停役。「どの業者にどう繋ぐか」は
+ * {@link PaymentProvider} の実装側にあり、このクラスに決済業者のSDKは一切入らない。
+ *
+ * <p>ここに残る責務は決済手段によらず不変な3つ:
+ * <ol>
+ *   <li>注文の所有者確認（ログイン or ゲストトークン）</li>
+ *   <li>支払い可能な状態か（PENDING か）の検証</li>
+ *   <li>支払い確定時の在庫コミットとイベント発行（{@link OrderService#markPaid} へ委譲）</li>
+ * </ol>
  */
 @Service
 public class PaymentService {
 
-    private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
-
-    // Currencies with no minor unit (amount is charged as-is, not * 100).
-    private static final Set<String> ZERO_DECIMAL = Set.of(
-            "jpy", "krw", "vnd", "clp", "bif", "djf", "gnf",
-            "kmf", "mga", "pyg", "rwf", "ugx", "vuv", "xaf", "xof", "xpf");
-
     private final OrderRepository orderRepository;
-    private final ProductRepository productRepository;
-    private final StripeProperties props;
+    private final OrderService orderService;
+    private final PaymentProviderRegistry registry;
+    private final PaymentProperties properties;
 
     public PaymentService(OrderRepository orderRepository,
-                          ProductRepository productRepository,
-                          StripeProperties props) {
+                          OrderService orderService,
+                          PaymentProviderRegistry registry,
+                          PaymentProperties properties) {
         this.orderRepository = orderRepository;
-        this.productRepository = productRepository;
-        this.props = props;
+        this.orderService = orderService;
+        this.registry = registry;
+        this.properties = properties;
     }
 
+    /** 決済手段が1つでも使える状態か。フロントの「支払う」ボタン表示に使う。 */
     public boolean isEnabled() {
-        return StringUtils.hasText(props.getSecretKey());
+        return registry.anyEnabled();
     }
 
     public String currency() {
-        return props.getCurrency();
+        return properties.getCurrency();
+    }
+
+    /** 購入画面に出す選択肢。 */
+    public List<PaymentProviderInfo> providers() {
+        return registry.enabled().stream()
+                .map(p -> new PaymentProviderInfo(p.id(), p.displayName()))
+                .toList();
     }
 
     @Transactional
-    public CheckoutSessionResponse createCheckoutSession(User user, Long orderId) {
+    public CheckoutSessionResponse createCheckoutSession(User user, Long orderId, String providerId) {
         Order order = orderRepository.findByIdAndUserId(orderId, user.getId())
                 .orElseThrow(() -> new NotFoundException("Order not found: " + orderId));
-        return createSessionFor(order);
+        return createSessionFor(order, providerId);
     }
 
-    /** Guest variant: the order token authenticates the request in place of a login. */
+    /** ゲスト版: ログインの代わりに注文トークンでリクエストを認証する。 */
     @Transactional
-    public CheckoutSessionResponse createGuestCheckoutSession(Long orderId, String token) {
-        if (token == null || token.isBlank()) {
-            throw new BadRequestException("Order token is required");
-        }
-        Order order = orderRepository.findByIdAndOrderToken(orderId, token)
-                .orElseThrow(() -> new NotFoundException("Order not found: " + orderId));
-        return createSessionFor(order);
+    public CheckoutSessionResponse createGuestCheckoutSession(Long orderId, String token, String providerId) {
+        return createSessionFor(requireGuestOrder(orderId, token), providerId);
     }
 
-    private CheckoutSessionResponse createSessionFor(Order order) {
-        if (!isEnabled()) {
-            throw new BadRequestException("Stripe is not configured. Set STRIPE_SECRET_KEY (test key) to enable payments.");
-        }
-        Long orderId = order.getId();
+    private CheckoutSessionResponse createSessionFor(Order order, String providerId) {
+        PaymentProvider provider = registry.require(providerId);
         if (order.getStatus() != OrderStatus.PENDING) {
             throw new BadRequestException("Order is not payable (status=" + order.getStatus() + ")");
         }
 
-        RequestOptions options = RequestOptions.builder().setApiKey(props.getSecretKey()).build();
-        SessionCreateParams.Builder builder = SessionCreateParams.builder()
-                .setMode(SessionCreateParams.Mode.PAYMENT)
-                .setSuccessUrl(props.getSuccessUrl() + "?orderId=" + orderId)
-                .setCancelUrl(props.getCancelUrl() + "?orderId=" + orderId)
-                .setClientReferenceId(order.getId().toString())
-                .putMetadata("orderId", order.getId().toString());
-
-        for (OrderItem item : order.getItems()) {
-            builder.addLineItem(SessionCreateParams.LineItem.builder()
-                    .setQuantity((long) item.getQuantity())
-                    .setPriceData(SessionCreateParams.LineItem.PriceData.builder()
-                            .setCurrency(props.getCurrency())
-                            .setUnitAmount(toMinorUnits(item.getUnitPrice(), props.getCurrency()))
-                            .setProductData(SessionCreateParams.LineItem.PriceData.ProductData.builder()
-                                    .setName(item.getProductName())
-                                    .build())
-                            .build())
-                    .build());
-        }
-
-        try {
-            Session session = Session.create(builder.build(), options);
-            order.setStripeSessionId(session.getId());
-            orderRepository.save(order);
-            return new CheckoutSessionResponse(order.getId(), session.getId(), session.getUrl());
-        } catch (StripeException e) {
-            throw new BadRequestException("Stripe error: " + e.getMessage());
-        }
+        CheckoutSession session = provider.createSession(order);
+        order.setPaymentProvider(provider.id());
+        order.setPaymentReference(session.reference());
+        orderRepository.save(order);
+        return new CheckoutSessionResponse(order.getId(), provider.id(),
+                session.reference(), session.redirectUrl());
     }
 
+    /**
+     * 決済側からの支払確定通知。署名検証は {@link PaymentProvider#handleCallback} の中で
+     * 完結しており、このメソッドは業者ごとの差異を知らない。
+     */
     @Transactional
-    public void handleWebhook(String payload, String signatureHeader) {
-        if (!StringUtils.hasText(props.getWebhookSecret())) {
-            throw new BadRequestException("Webhook secret not configured (STRIPE_WEBHOOK_SECRET).");
-        }
-        Event event;
-        try {
-            event = Webhook.constructEvent(payload, signatureHeader, props.getWebhookSecret());
-        } catch (SignatureVerificationException e) {
-            throw new BadRequestException("Invalid Stripe signature");
-        }
-
-        if ("checkout.session.completed".equals(event.getType())) {
-            // getObject() is empty when the event's API version differs from the SDK's
-            // pinned version (Stripe accounts often send a different one). Fall back to
-            // deserializeUnsafe() so a version skew never silently drops a payment.
-            EventDataObjectDeserializer deserializer = event.getDataObjectDeserializer();
-            StripeObject object = deserializer.getObject().orElse(null);
-            if (object == null) {
-                try {
-                    object = deserializer.deserializeUnsafe();
-                } catch (EventDataObjectDeserializationException e) {
-                    log.warn("Could not deserialize checkout.session.completed payload: {}", e.getMessage());
-                }
-            }
-            if (object instanceof Session session) {
-                String orderId = session.getMetadata() != null ? session.getMetadata().get("orderId") : null;
-                if (orderId == null) {
-                    orderId = session.getClientReferenceId();
-                }
-                if (orderId != null) {
-                    markPaid(Long.valueOf(orderId));
-                }
-            }
-        } else {
-            log.debug("Ignoring Stripe event type {}", event.getType());
-        }
+    public void handleCallback(String providerId, String payload, Map<String, String> headers) {
+        PaymentProvider provider = registry.require(providerId);
+        provider.handleCallback(payload, headers)
+                .ifPresent(callback -> orderService.markPaid(
+                        callback.orderId(), provider.id(), callback.reference()));
     }
 
-    private void markPaid(Long orderId) {
-        orderRepository.findById(orderId).ifPresent(order -> {
-            switch (order.getStatus()) {
-                case PENDING -> {
-                    // Convert each hold into a real stock decrement. The PENDING guard
-                    // above makes this idempotent against duplicate webhook deliveries.
-                    for (OrderItem item : order.getItems()) {
-                        productRepository.commitStock(item.getProduct().getId(), item.getQuantity());
-                    }
-                    order.setStatus(OrderStatus.PAID);
-                    orderRepository.save(order);
-                    log.info("Order {} marked PAID via Stripe webhook (stock committed)", orderId);
-                }
-                case EXPIRED -> {
-                    // The hold timed out and stock was already released before payment
-                    // landed. Honor the payment but leave stock alone (re-committing could
-                    // oversell); flag it for manual reconciliation.
-                    order.setStatus(OrderStatus.PAID);
-                    orderRepository.save(order);
-                    log.warn("Order {} was EXPIRED when payment arrived — marked PAID WITHOUT "
-                            + "stock decrement. Manual stock reconciliation may be needed.", orderId);
-                }
-                default -> log.info("Order {} already {} — ignoring duplicate webhook",
-                        orderId, order.getStatus());
-            }
-        });
+    /**
+     * 外部決済ページを持たない手段（銀行振込等）の案内ページ。閲覧権限は注文の閲覧権限と
+     * 同じ——金額と照合番号が載るため、ログインかゲストトークンを要求する。
+     */
+    @Transactional(readOnly = true)
+    public String instructions(String providerId, Long orderId, String token, User user) {
+        PaymentProvider provider = registry.require(providerId);
+        Order order = (token != null && !token.isBlank())
+                ? requireGuestOrder(orderId, token)
+                : orderRepository.findByIdAndUserId(orderId, requireUser(user).getId())
+                        .orElseThrow(() -> new NotFoundException("Order not found: " + orderId));
+        return provider.instructionsHtml(order)
+                .orElseThrow(() -> new BadRequestException(
+                        "Payment provider '" + provider.id() + "' has no instructions page"));
     }
 
-    private long toMinorUnits(BigDecimal amount, String currency) {
-        if (ZERO_DECIMAL.contains(currency.toLowerCase())) {
-            return amount.setScale(0, java.math.RoundingMode.HALF_UP).longValueExact();
+    private Order requireGuestOrder(Long orderId, String token) {
+        if (token == null || token.isBlank()) {
+            throw new BadRequestException("Order token is required");
         }
-        return amount.movePointRight(2).setScale(0, java.math.RoundingMode.HALF_UP).longValueExact();
+        return orderRepository.findByIdAndOrderToken(orderId, token)
+                .orElseThrow(() -> new NotFoundException("Order not found: " + orderId));
+    }
+
+    private User requireUser(User user) {
+        if (user == null) {
+            throw new BadRequestException("Login or an order token is required");
+        }
+        return user;
     }
 }

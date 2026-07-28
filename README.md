@@ -51,7 +51,7 @@ checkout → PENDING（在庫を hold）
 | 注文（会員） | `POST /api/orders/checkout`, `GET /api/orders`, `/{id}` | ユーザー（本人のみ） |
 | 注文（ゲスト） | `POST /api/orders/guest-checkout`, `GET /api/orders/guest/{id}?token=` | 公開（トークン照合） |
 | 税（公開） | `GET /api/tax/config`（内税/外税と現行税率） | 公開 |
-| 決済（Stripe・テスト） | `GET /api/payments/config`, `POST /api/payments/orders/{id}/checkout-session`, `POST /api/payments/guest/orders/{id}/checkout-session`, `POST /api/payments/webhook` | 公開 / 本人 |
+| 決済 | `GET /api/payments/config`, `POST /api/payments/orders/{id}/checkout-session?provider=`, `POST /api/payments/guest/orders/{id}/checkout-session`, `POST /api/payments/{providerId}/webhook`, `GET /api/payments/{providerId}/instructions` | 公開 / 本人 |
 | 管理: 商品 | `POST/PUT/DELETE /api/admin/products` | ADMIN |
 | 管理: カテゴリ | `POST/PUT/DELETE /api/admin/categories` | ADMIN |
 | 管理: 注文 | `GET /api/admin/orders`, `/{id}`, `PATCH /api/admin/orders/{id}/status` | ADMIN |
@@ -150,25 +150,57 @@ Swagger UI なら右上の **Authorize** にトークンを貼れば全エンド
 | `APP_TAX_PRICING_MODE` | `INCLUSIVE`（内税）/ `EXCLUSIVE`（外税）の**初期値**（以後は管理画面の設定が優先） | INCLUSIVE |
 | `APP_TAX_ROUNDING` | 端数処理 `FLOOR` / `HALF_UP` / `CEILING` | FLOOR |
 | `APP_CONTEXT_PATH` | サブパス配信時のプレフィックス（本番は `/ec`） | （空＝ルート） |
-| `STRIPE_SECRET_KEY` | Stripe テストキー `sk_test_...`（空=決済無効） | （空） |
+| `PAYMENT_CURRENCY` | 通貨（決済手段によらない共通設定） | jpy（`STRIPE_CURRENCY` も後方互換で有効） |
+| `PAYMENT_DEFAULT_PROVIDER` | 決済手段未指定時の既定 id | stripe（無効なら有効な手段へ自動フォールバック） |
+| `STRIPE_SECRET_KEY` | Stripe テストキー `sk_test_...`（空=Stripe無効） | （空） |
 | `STRIPE_WEBHOOK_SECRET` | Webhook 署名シークレット `whsec_...` | （空） |
-| `STRIPE_CURRENCY` / `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL` | 通貨・決済後リダイレクト先 | jpy / `/api/payments/*` |
+| `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL` | 決済後リダイレクト先 | `/api/payments/*` |
+| `BANK_TRANSFER_ENABLED` | 銀行振込を決済手段として有効化 | false |
+| `BANK_TRANSFER_ACCOUNT` / `BANK_TRANSFER_NOTE_DAYS` | 案内ページに出す振込先・入金確認目安 | サンプル値 / 3 |
+| `NOTIFY_MAIL_ENABLED` | 注文イベントのメール通知を有効化（別途 `spring.mail.*` が必要） | false |
+| `NOTIFY_MAIL_FROM` / `NOTIFY_MAIL_ADMIN` | 送信元 / 受注控えの宛先（空=送らない） | no-reply@example.com / （空） |
 | `PORT` | **アプリ待受ポート（コンテナ内）** | 8080 |
 
-## 決済（Stripe・テストモード専用）
+## 拡張点（プラグイン）
 
-Stripe Checkout（ホスト型）。`checkout-session` が返す `checkoutUrl` をブラウザで開き、テストカード **`4242 4242 4242 4242`**（有効期限=任意の未来 / CVC=任意）で支払うと、Webhook（`checkout.session.completed`）経由で注文が **PAID** になり、予約在庫が実減算されます。
+機能追加のうち「増えることが分かっているもの」は、コアを変更せずに実装を足せる形にしてあります。どちらも **`@Component` を置くだけ**で自動登録されます。
+
+### 決済手段 — `PaymentProvider`
+
+決済業者ごとの差異（セッション作成・署名検証）を実装側に閉じ込める契約です。同梱の実装は2つ:
+
+| id | 実装 | 有効化 |
+|---|---|---|
+| `stripe` | Stripe Checkout（ホスト型・テストモード） | `STRIPE_SECRET_KEY` |
+| `bank_transfer` | 銀行振込。**外部APIもWebhookも持たない**手段が同じ契約に収まることの実証 | `BANK_TRANSFER_ENABLED=true` |
+
+有効な手段は `GET /api/payments/config` に現れ、ストアフロントのボタンもその一覧から生成されるため、**実装を1つ足してもフロント／コアのコードは変更不要**です。
 
 ```bash
-curl -s -X POST $BASE/api/payments/orders/1/checkout-session \
-  -H "Authorization: Bearer $TOKEN" | jq -r .checkoutUrl
+# 決済手段の一覧
+curl -s $BASE/api/payments/config | jq .providers
+
+# 支払い開始（provider 省略時は既定）— 返る redirectUrl を開く
+curl -s -X POST "$BASE/api/payments/orders/1/checkout-session?provider=stripe" \
+  -H "Authorization: Bearer $TOKEN" | jq -r .redirectUrl
 ```
 
-Webhook のローカル転送は Stripe CLI:
-`stripe listen --forward-to localhost:<Port>/api/payments/webhook`
+Webhook は `POST /api/payments/{providerId}/webhook`（署名検証は各実装の中で完結）。
+Stripe のローカル転送は Stripe CLI: `stripe listen --forward-to localhost:<Port>/api/payments/stripe/webhook`
+※ 旧 URL `/api/payments/webhook` も Stripe 用として互換保持しています。
 
-> ⚠️ **キーを入れるなら Webhook 登録もセットで。** 実減算の契機は Webhook だけなので、キーだけ設定して Webhook 未登録だと「支払ったのに期限切れで EXPIRED」になります。
+テストカードは **`4242 4242 4242 4242`**（有効期限=任意の未来 / CVC=任意）。
+
+> ⚠️ **Stripe のキーを入れるなら Webhook 登録もセットで。** 実減算の契機は Webhook なので、キーだけ設定して Webhook 未登録だと「支払ったのに期限切れで EXPIRED」になります。
 > ⚠️ **テストモード限定運用**。`sk_test_` / `whsec_` のみを使用し、本番(live)キー・実カードは扱いません。キーはコミットせず環境変数で渡します。
+
+### 注文イベント — `OrderEventListener`
+
+支払確定・キャンセル・期限切れを受け取る拡張点です。メール送信・Slack通知・会計連携・分析イベントはここに載せます（コアはイベントを発行するだけで、通知手段を一切知りません）。
+
+- 呼び出しは**トランザクションのコミット後**。「注文はロールバックしたのにメールだけ飛ぶ」が起きません。
+- 1つのリスナーが例外を投げても、他のリスナーは走りきります（障害の隔離）。
+- 同梱の実装: 監査ログ出力（常時有効）／メール通知（`NOTIFY_MAIL_ENABLED=true`）。
 
 ## デプロイ
 
@@ -181,6 +213,7 @@ Webhook のローカル転送は Stripe CLI:
 - 商品画像アップロード、レビュー、在庫のペシミスティックロック
 - 管理パネルの対象拡張（商品・カテゴリ・注文は現状 Swagger / curl から操作）
 - Flyway でマイグレーション管理、統合テスト（Testcontainers）
+- 金額計算の段階化（送料・クーポン・会員割引・ポイント）——現在は小計/税/合計を一括計算しており、これらを差し込む段がない
 
 ## 🤝 コントリビュート
 

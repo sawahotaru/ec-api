@@ -41,7 +41,12 @@ public class SecurityConfig {
                                 "/api/orders/guest-checkout",
                                 "/api/orders/guest/**",
                                 "/api/payments/guest/**",
+                                // 決済手段プラグインごとの Webhook。認証はプラグイン側の署名検証が担う。
+                                "/api/payments/*/webhook",
+                                // 旧 Stripe Webhook URL（ダッシュボード登録済みのため互換保持）
                                 "/api/payments/webhook",
+                                // 案内ページ。閲覧権限はサービス層でゲストトークン／ログインを検証する。
+                                "/api/payments/*/instructions",
                                 "/api/payments/config",
                                 "/api/payments/success",
                                 "/api/payments/cancel",

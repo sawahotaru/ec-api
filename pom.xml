@@ -84,11 +84,17 @@
             <version>${springdoc.version}</version>
         </dependency>
 
-        <!-- Stripe (test-mode payments) -->
+        <!-- Stripe (test-mode payments) — PaymentProvider の一実装が使うだけで、コアは依存しない -->
         <dependency>
             <groupId>com.stripe</groupId>
             <artifactId>stripe-java</artifactId>
             <version>${stripe.version}</version>
+        </dependency>
+
+        <!-- 注文イベント → メール通知プラグイン用（app.notify.mail.enabled=true のときだけ動く） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
         </dependency>
 
         <dependency>

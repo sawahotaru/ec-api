@@ -43,14 +43,33 @@ app:
     pricing-mode: ${APP_TAX_PRICING_MODE:INCLUSIVE}
     # 端数処理: FLOOR=切り捨て(JP小売で一般的) / HALF_UP=四捨五入 / CEILING=切り上げ。
     rounding: ${APP_TAX_ROUNDING:FLOOR}
+  payment:
+    # 決済手段によらない共通設定。決済手段そのものは PaymentProvider の実装として
+    # 追加され、有効化された実装だけが /api/payments/config に現れる。
+    currency: ${PAYMENT_CURRENCY:${STRIPE_CURRENCY:jpy}}
+    # 決済手段が指定されなかったときに使う id。従来どおり Stripe を既定にしておく
+    # （無効なら有効な手段へ自動フォールバック。空欄なら「有効なうち最初の1つ」）。
+    default-provider: ${PAYMENT_DEFAULT_PROVIDER:stripe}
+    bank-transfer:
+      # 外部APIもWebhookも持たない決済手段の例。入金確認は管理画面から PAID にして行う。
+      enabled: ${BANK_TRANSFER_ENABLED:false}
+      account-info: ${BANK_TRANSFER_ACCOUNT:〇〇銀行 〇〇支店 普通 1234567 カ）サンプルストア}
+      note-days: ${BANK_TRANSFER_NOTE_DAYS:3}
   stripe:
     # TEST MODE ONLY. Leave blank to disable payments (app still boots).
     # Set sk_test_... and whsec_... in production env (never commit real keys).
     secret-key: ${STRIPE_SECRET_KEY:}
     webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
-    currency: ${STRIPE_CURRENCY:jpy}
     success-url: ${STRIPE_SUCCESS_URL:http://localhost:8502/api/payments/success}
     cancel-url: ${STRIPE_CANCEL_URL:http://localhost:8502/api/payments/cancel}
+  notify:
+    mail:
+      # 注文イベント → メール通知プラグイン。既定は無効（デモ環境で誤送信しないため）。
+      # 有効にする場合は spring.mail.host 等の SMTP 設定も必要。
+      enabled: ${NOTIFY_MAIL_ENABLED:false}
+      from: ${NOTIFY_MAIL_FROM:no-reply@example.com}
+      # 空でなければ受注通知を管理者にも送る。
+      admin: ${NOTIFY_MAIL_ADMIN:}
 
 springdoc:
   swagger-ui:

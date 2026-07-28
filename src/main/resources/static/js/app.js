@@ -16,6 +16,8 @@ const state = {
     token: localStorage.getItem("ec_token") || null,
     user: null,
     paymentsEnabled: false,
+    // 有効な決済手段（サーバー側の PaymentProvider プラグイン）。[{id, displayName}]
+    paymentProviders: [],
     categories: [],
     lastOrder: null,
     productsById: {},
@@ -717,8 +719,7 @@ function renderOrders(orders) {
     box.innerHTML = orders.map((o) => {
         const when = new Date(o.createdAt).toLocaleString("ja-JP");
         const lines = o.items.map((i) => `<div class="lmeta">${escapeHtml(i.productName)} × ${i.quantity} — ${yen(i.lineTotal)}</div>`).join("");
-        const payBtn = (state.paymentsEnabled && o.status === "PENDING")
-            ? `<button class="btn pay-btn" data-order="${o.id}">Stripeで支払う（テスト）</button>` : "";
+        const payBtn = o.status === "PENDING" ? payButtonsHtml(o.id, null) : "";
         return `
         <div class="order-block">
             <div class="oh">
@@ -745,31 +746,43 @@ function taxBreakdownHtml(order) {
 
 function showOrderResult(order) {
     const banner = $("#banner");
-    const tokenAttr = order.guest && order.orderToken ? ` data-token="${escapeHtml(order.orderToken)}"` : "";
     let html = `✅ 注文 #${order.id} を受け付けました（状態 ${order.status}）。`;
     html += taxBreakdownHtml(order);
     if (order.guest && order.orderToken) {
         html += `<div class="hint" style="margin-top:6px">照会・支払い用トークン: <code>${escapeHtml(order.orderToken)}</code><br>ログインなしで注文を追跡できます。大切に保管してください。</div>`;
     }
     if (state.paymentsEnabled && order.status === "PENDING") {
-        html += ` <button class="btn pay-btn" data-order="${order.id}"${tokenAttr} style="margin-left:8px">Stripeで支払う（テスト）</button>`;
+        html += " " + payButtonsHtml(order.id, order.guest && order.orderToken ? order.orderToken : null);
     } else if (!state.paymentsEnabled) {
-        html += " （Stripe未設定のため決済はスキップ）";
+        html += " （決済手段が未設定のためスキップ）";
     }
     banner.innerHTML = html;
     banner.classList.remove("hidden");
     window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+// 決済手段のボタンはサーバーが返す一覧から組み立てる。手段を1つ足しても
+// （PaymentProvider の実装を追加しても）このコードは変更不要。
+function payButtonsHtml(orderId, token) {
+    if (!state.paymentsEnabled) return "";
+    const tokenAttr = token ? ` data-token="${escapeHtml(token)}"` : "";
+    return state.paymentProviders.map((p) =>
+        `<button class="btn pay-btn" data-order="${orderId}" data-provider="${escapeHtml(p.id)}"${tokenAttr} style="margin-left:8px">${escapeHtml(p.displayName)}で支払う</button>`
+    ).join("");
+}
+
 // token present → guest order (public endpoint); absent → the logged-in user's order.
-async function payWithStripe(orderId, token) {
+async function startPayment(orderId, token, providerId) {
     try {
-        toast("Stripe決済ページへ移動します…");
-        const path = token
+        toast("支払い画面へ移動します…");
+        const base = token
             ? `/api/payments/guest/orders/${orderId}/checkout-session?token=${encodeURIComponent(token)}`
             : `/api/payments/orders/${orderId}/checkout-session`;
+        const path = providerId
+            ? `${base}${base.includes("?") ? "&" : "?"}provider=${encodeURIComponent(providerId)}`
+            : base;
         const res = await api(path, { method: "POST", auth: !token });
-        window.location.href = res.checkoutUrl;
+        window.location.href = res.redirectUrl;
     } catch (ex) { toast(ex.message); }
 }
 
@@ -827,7 +840,7 @@ function bind() {
         if (add) { addToCart(Number(add.dataset.id)); return; }
 
         const pay = e.target.closest(".pay-btn");
-        if (pay) { payWithStripe(Number(pay.dataset.order), pay.dataset.token || null); return; }
+        if (pay) { startPayment(Number(pay.dataset.order), pay.dataset.token || null, pay.dataset.provider || null); return; }
 
         // Admin panel actions (the panel is re-rendered, so delegate rather than bind).
         const act = e.target.closest("[data-act]");
@@ -859,8 +872,9 @@ async function init() {
     try {
         const cfg = await api("/api/payments/config");
         state.paymentsEnabled = cfg.enabled;
+        state.paymentProviders = cfg.providers || [];
         if (!cfg.enabled) {
-            $("#banner").textContent = "🧪 デモモード: Stripe未設定のため決済はスキップされます（注文までは動作します）。";
+            $("#banner").textContent = "🧪 デモモード: 決済手段が未設定のためスキップされます（注文までは動作します）。";
             $("#banner").classList.remove("hidden");
         }
     } catch { /* ignore */ }

@@ -8,6 +8,9 @@ import com.example.ecapi.domain.PricingMode;
 import com.example.ecapi.domain.Product;
 import com.example.ecapi.domain.TaxCategory;
 import com.example.ecapi.domain.User;
+import com.example.ecapi.event.OrderCancelledEvent;
+import com.example.ecapi.event.OrderExpiredEvent;
+import com.example.ecapi.event.OrderPaidEvent;
 import com.example.ecapi.exception.BadRequestException;
 import com.example.ecapi.exception.NotFoundException;
 import com.example.ecapi.repository.CartItemRepository;
@@ -19,6 +22,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -27,19 +33,24 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class OrderService {
 
+    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
+
     private final OrderRepository orderRepository;
     private final CartItemRepository cartItemRepository;
     private final ProductRepository productRepository;
     private final TaxService taxService;
+    private final ApplicationEventPublisher events;
 
     public OrderService(OrderRepository orderRepository,
                         CartItemRepository cartItemRepository,
                         ProductRepository productRepository,
-                        TaxService taxService) {
+                        TaxService taxService,
+                        ApplicationEventPublisher events) {
         this.orderRepository = orderRepository;
         this.cartItemRepository = cartItemRepository;
         this.productRepository = productRepository;
         this.taxService = taxService;
+        this.events = events;
     }
 
     /**
@@ -174,6 +185,7 @@ public class OrderService {
         for (Order order : stale) {
             releaseHeldItems(order);
             order.setStatus(OrderStatus.EXPIRED);
+            events.publishEvent(OrderExpiredEvent.of(order));
         }
         return stale.size();
     }
@@ -210,18 +222,87 @@ public class OrderService {
                 .orElseThrow(() -> new NotFoundException("Order not found: " + orderId));
     }
 
+    /**
+     * 管理画面からのステータス変更。単なる代入ではなく、在庫とイベントの整合を取る唯一の
+     * 入口にしてある。
+     *
+     * <p>とくに PAID への変更は {@link #applyPaid} を通す。以前はここが素の代入だったため、
+     * 管理者が手で PAID にすると<strong>引当が実在庫の減算に変換されないまま</strong>になり、
+     * 在庫が過大に残っていた（Stripe の Webhook 経由だけが正しく処理していた）。銀行振込の
+     * ように人手で入金確認する手段が入ると常用経路になるため、ここで塞いでいる。
+     */
     @Transactional
     public Order updateStatus(Long orderId, OrderStatus status) {
         Order order = get(orderId);
         OrderStatus previous = order.getStatus();
-        // Cancelling a still-unpaid order must give its held stock back. A PAID order
-        // has already had its hold converted to a real decrement, so there is nothing
-        // to release (and releasing would wrongly inflate stock).
-        if (status == OrderStatus.CANCELLED && previous == OrderStatus.PENDING) {
-            releaseHeldItems(order);
+        if (previous == status) {
+            return order;
         }
-        order.setStatus(status);
+        switch (status) {
+            case PAID -> applyPaid(order, null, null);
+            case CANCELLED -> {
+                // 未払い注文のキャンセルは引当を戻す。PAID 済みは既に実在庫が減っているので
+                // ここで戻すと在庫を二重に増やしてしまう。
+                if (previous == OrderStatus.PENDING) {
+                    releaseHeldItems(order);
+                }
+                order.setStatus(OrderStatus.CANCELLED);
+                events.publishEvent(OrderCancelledEvent.of(order, previous.name()));
+            }
+            default -> order.setStatus(status);
+        }
         return orderRepository.save(order);
+    }
+
+    /**
+     * 決済確定。決済手段を問わずこの1本を通る（Stripe の Webhook も、銀行振込の手動確認も）。
+     *
+     * @param providerId 決済手段の id。手動確定なら null（既存の値を保つ）
+     * @param reference  決済側の参照ID。無ければ null
+     */
+    @Transactional
+    public void markPaid(Long orderId, String providerId, String reference) {
+        orderRepository.findById(orderId).ifPresentOrElse(
+                order -> {
+                    applyPaid(order, providerId, reference);
+                    orderRepository.save(order);
+                },
+                () -> log.warn("Payment callback referenced unknown order {}", orderId));
+    }
+
+    /**
+     * 引当（hold）を実在庫の減算へ変換し、PAID にして {@link OrderPaidEvent} を発行する。
+     * PENDING ガードにより、Webhook が重複配信されても冪等。
+     */
+    private void applyPaid(Order order, String providerId, String reference) {
+        if (providerId != null) {
+            order.setPaymentProvider(providerId);
+        }
+        if (reference != null) {
+            order.setPaymentReference(reference);
+        }
+        Long orderId = order.getId();
+        switch (order.getStatus()) {
+            case PENDING -> {
+                for (OrderItem item : order.getItems()) {
+                    productRepository.commitStock(item.getProduct().getId(), item.getQuantity());
+                }
+                order.setStatus(OrderStatus.PAID);
+                log.info("Order {} marked PAID via {} (stock committed)",
+                        orderId, providerId != null ? providerId : "manual update");
+                events.publishEvent(OrderPaidEvent.of(order));
+            }
+            case EXPIRED -> {
+                // 保留期限切れで引当を解放した後に入金が届いた。支払いは受けるが在庫はもう
+                // 触らない（再コミットすると売り越す）。手動での棚卸し調整が要る。
+                order.setStatus(OrderStatus.PAID);
+                log.warn("Order {} was EXPIRED when payment arrived — marked PAID WITHOUT "
+                        + "stock decrement. Manual stock reconciliation may be needed.", orderId);
+                events.publishEvent(OrderPaidEvent.of(order));
+            }
+            default -> log.info("Order {} already {} — ignoring duplicate payment confirmation",
+                    orderId, order.getStatus());
+        }
     }
 
     private void releaseHeldItems(Order order) {
