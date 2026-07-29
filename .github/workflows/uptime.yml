@@ -1,0 +1,87 @@
+name: Uptime (lab.4510.be)
+
+# lab.4510.be の死活監視（A4）。
+#
+# 【なぜ ec-api リポジトリに置くのか】
+# インフラ定義は oracle-lab にあるが、あちらは private のため Actions の実行時間が
+# 従量（無料枠2000分/月）になり、15分間隔では枠を食い潰す。public リポジトリの
+# Actions は実行時間が無制限・無料なので、公開している ec-api に間借りしている。
+# 監視しているのは lab.4510.be 全体であって ec-api 単体ではない。
+#
+# 【意図的に検査しないもの】
+# clinic の管理画面（秘密スラッグ配下・/admin/ は404）は検査しない。
+# 公開ソースに「管理画面を隠している」事実そのものを書かないため（oracle-lab を
+# private にしたのと同じ理由）。デプロイ後のスモークテスト側では検査している。
+#
+# 【デプロイ後スモークとの違い】
+# スモーク(oracle-lab/deploy-oracle.yml)は「デプロイしたときに壊れていないか」。
+# こちらは「デプロイしていないのに落ちていないか」（VM再起動・OOM・証明書切れ等）を見る。
+#
+# 【通知】
+# 失敗するとGitHubからアカウントのメールへ通知が飛ぶ。
+# 注意: スケジュール実行は数分〜数十分遅延することがある（GitHub の仕様）。
+#   分単位の精度が要る場合は外部の監視サービスを併用すること。
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'   # 15分ごと
+  workflow_dispatch:          # 手動実行でいつでも確認できる
+
+concurrency:
+  group: uptime
+  cancel-in-progress: true    # 前回が詰まっていたら捨てて最新だけ見る
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 公開経路の死活確認
+        run: |
+          BASE="https://lab.4510.be"
+          MAX=3           # 一時的なゆらぎで騒がないよう、3回試して全部だめなら異常とする
+          fail=0
+
+          check() {   # check <パス> <説明>
+            path="$1"; label="$2"
+            for i in $(seq 1 $MAX); do
+              code=$(curl -sSL -o /dev/null -w '%{http_code}' --max-time 20 "$BASE$path" || echo 000)
+              if [ "$code" = "200" ]; then
+                echo "  OK   $path ($label)"
+                return 0
+              fi
+              [ "$i" -lt "$MAX" ] && sleep 20
+            done
+            echo "::error::$path が 200 を返しません (最後の応答: $code / $label)"
+            fail=1
+          }
+
+          check /                    "ランディング"
+          check /ec/                 "ECサイト"
+          check /clinic-reservation/ "予約システム"
+          check /poker/              "ポーカー"
+          check /solitaire/          "ソリティア"
+          check /go/                 "Go"
+          check /py/                 "Python"
+          check /ec/actuator/health  "ec-api ヘルスチェック"
+
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::lab.4510.be に異常があります。VM の状態を確認してください。"
+            echo "  ssh oracle-lab 'cd /opt/lab && docker compose ps'"
+            exit 1
+          fi
+          echo "全経路 OK"
+
+      - name: TLS証明書の残り日数を確認
+        # 証明書切れは「デプロイしていないのに落ちる」典型なので、切れる前に気づけるようにする。
+        # Cloudflare のエッジ証明書を見ている（Origin証明書は2041まで）。
+        run: |
+          end=$(echo | openssl s_client -servername lab.4510.be -connect lab.4510.be:443 2>/dev/null \
+                | openssl x509 -noout -enddate | cut -d= -f2)
+          end_ts=$(date -d "$end" +%s)
+          days=$(( (end_ts - $(date +%s)) / 86400 ))
+          echo "  証明書の期限: $end (残り ${days} 日)"
+          if [ "$days" -lt 14 ]; then
+            echo "::error::TLS証明書の残りが ${days} 日です。更新を確認してください。"
+            exit 1
+          fi
