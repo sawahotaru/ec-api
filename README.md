@@ -95,6 +95,16 @@ docker compose up --build
 
 > ローカルに JDK は不要（すべて Docker 内でビルド）。JDK 21 + Maven があれば `mvn spring-boot:run` でも可。
 
+## テスト
+
+```bash
+mvn -B clean test
+# JDK が無ければ Docker で:
+docker run --rm -v "$PWD:/app" -w /app maven:3.9-eclipse-temurin-21 mvn -B clean test
+```
+
+H2 インメモリで完結するので、DB もネットワークサービスも不要です。中身は在庫ライフサイクル（引当 → 確定 or 解放）の回帰テストで、**Webhook の重複配信で二重に在庫が減らないこと**・**管理画面からの手動 PAID でも引当が実減算に変換されること**を固定しています。CI（`.github/workflows/deploy-notify.yml`）ではこれが通ったときだけデプロイが走ります。
+
 ## 初期データ（シード）
 
 `APP_SEED_ENABLED=true`（デフォルト）で起動時に投入されます。
@@ -103,7 +113,7 @@ docker compose up --build
 - デモユーザー: `user@example.com` / `user1234`
 - カテゴリ4件・商品12件（和雑貨セレクトショップ想定: 日本茶 / 和菓子 / 和食器 / 和雑貨）、税率（標準10% / 軽減8%・2019-10-01〜）
   - 飲食料品（日本茶・和菓子）は**軽減8%**、器と雑貨は**標準10%**。1つのカートに両方入れると税区分ごとの内訳が出るので、消費税計算の挙動をそのまま確認できます。
-  - 商品画像は**外部サービスではなく同梱SVG**（`static/images/products/`）。外部依存ゼロで、オフラインでも欠けません。
+  - 商品画像は**外部サービスではなく同梱の写真**（`static/images/products/*.jpg`）。外部依存ゼロで、オフラインでも欠けません。
 
 > ⚠️ **これはローカル/デモ用のシード値です。** 公開環境では必ず `APP_ADMIN_EMAIL` / `APP_ADMIN_PASSWORD` と `APP_JWT_SECRET` を環境変数で上書きしてください（公開デモも既定値では動かしていません）。
 

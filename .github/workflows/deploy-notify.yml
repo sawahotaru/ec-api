@@ -1,6 +1,7 @@
 name: Deploy to lab.4510.be
 
-# このリポジトリの main が更新されたら、統合ハブ oracle-lab のデプロイを起動する。
+# このリポジトリの main が更新されたら、まず `mvn test` を回し、**通ったときだけ**
+# 統合ハブ oracle-lab のデプロイを起動する。
 # oracle-lab 側 (deploy-oracle.yml) が repository_dispatch: ec-api-updated を受け、
 # client_payload.service=ec-api を見て **ec-api サービスだけ** をVMで再ビルド/再起動する
 # （VMのビルド負荷を最小化する方式）。
@@ -14,10 +15,40 @@ name: Deploy to lab.4510.be
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
+  test:
+    name: mvn test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run tests
+        run: mvn -B --no-transfer-progress clean test
+
+      - name: Upload surefire reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          if-no-files-found: ignore
+
   notify:
+    name: Trigger oracle-lab deploy
+    needs: test
+    # テストが通った main への push のときだけデプロイする（PR では走らせない）
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Trigger oracle-lab deploy (scoped to ec-api)
