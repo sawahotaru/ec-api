@@ -105,6 +105,22 @@ docker run --rm -v "$PWD:/app" -w /app maven:3.9-eclipse-temurin-21 mvn -B clean
 
 H2 インメモリで完結するので、DB もネットワークサービスも不要です。中身は在庫ライフサイクル（引当 → 確定 or 解放）の回帰テストで、**Webhook の重複配信で二重に在庫が減らないこと**・**管理画面からの手動 PAID でも引当が実減算に変換されること**を固定しています。CI（`.github/workflows/deploy-notify.yml`）ではこれが通ったときだけデプロイが走ります。
 
+## スキーマ管理（Flyway）
+
+スキーマの正は `src/main/resources/db/migration/` のマイグレーションです。Hibernate は `ddl-auto=validate`＝**スキーマを変更せず、エンティティとずれていたら起動時に落とす**役割だけを持ちます。
+
+| ファイル | 内容 |
+|---|---|
+| `V1__baseline_schema.sql` | ベースライン。既存DBでは実行されず「適用済み」として記録される（`baseline-on-migrate`）。実際に走るのは空DB（テストのH2・新規環境）だけ |
+| `V2__drop_orders_stripe_session_id.sql` | 決済のプラグイン化で不要になった Stripe 固有列を撤去（捨てる前に `payment_reference` へ移行） |
+| `V3__fix_orders_status_check_and_guest_user_id.sql` | 実DBに残っていたエンティティとの不整合を是正（後述） |
+
+- SQL は **H2 と PostgreSQL の両方で動く書き方**に限定しています。テストは H2 で走るので、マイグレーションが壊れれば CI が赤くなる＝本番に出る前に気づけます。
+- CHECK 制約には明示的な名前（`ck_orders_status` など）を付けます。自動生成名だと後から `ALTER` で直せません。
+- 緊急時は `SPRING_FLYWAY_ENABLED=false` で無効化できます（`ddl-auto=validate` は残るので、スキーマが合っていなければ起動しません）。
+
+> 💡 **なぜ `ddl-auto=update` をやめたか。** `update` は列を足すだけで、CHECK 制約の作り直しも `NOT NULL` の緩和もしません。そのため機能追加のたびに実DBだけが静かに古いまま取り残されます。実際 Flyway 導入時に、**`orders.status` の CHECK に `EXPIRED` が無く、未入金注文の期限切れ処理が実DBで必ず失敗する**状態が見つかりました（アプリ側は正しく、DBだけが古かった）。`validate` はこの種のずれを起動時に検出します。
+
 ## 初期データ（シード）
 
 `APP_SEED_ENABLED=true`（デフォルト）で起動時に投入されます。
@@ -114,6 +130,8 @@ H2 インメモリで完結するので、DB もネットワークサービス�
 - カテゴリ4件・商品12件（和雑貨セレクトショップ想定: 日本茶 / 和菓子 / 和食器 / 和雑貨）、税率（標準10% / 軽減8%・2019-10-01〜）
   - 飲食料品（日本茶・和菓子）は**軽減8%**、器と雑貨は**標準10%**。1つのカートに両方入れると税区分ごとの内訳が出るので、消費税計算の挙動をそのまま確認できます。
   - 商品画像は**外部サービスではなく同梱の写真**（`static/images/products/*.jpg`）。外部依存ゼロで、オフラインでも欠けません。
+
+> ⚠️ **シードが走るのは「まだデータが無いDB」だけです。** 稼働中のDBのカタログを入れ替えたい場合、`DataSeeder` を書き換えても反映されません。マイグレーション（`V4__...sql`）として書いてください。スキーマだけでなくデータの入れ替えも Flyway が運べます。
 
 > ⚠️ **これはローカル/デモ用のシード値です。** 公開環境では必ず `APP_ADMIN_EMAIL` / `APP_ADMIN_PASSWORD` と `APP_JWT_SECRET` を環境変数で上書きしてください（公開デモも既定値では動かしていません）。
 
@@ -153,6 +171,7 @@ Swagger UI なら右上の **Authorize** にトークンを貼れば全エンド
 |---|---|---|
 | `SPRING_PROFILES_ACTIVE` | `postgres` で PostgreSQL 有効化 | （未指定＝H2） |
 | `SPRING_DATASOURCE_URL` / `_USERNAME` / `_PASSWORD` | DB接続 | — |
+| `SPRING_FLYWAY_ENABLED` | 起動時のスキーマ・マイグレーション | true |
 | `APP_JWT_SECRET` | JWT署名鍵（32バイト以上） | 開発用ダミー |
 | `APP_JWT_EXPIRATION_MS` | トークン有効期限 | 86400000（24h） |
 | `APP_SEED_ENABLED` | 起動時シード | true |

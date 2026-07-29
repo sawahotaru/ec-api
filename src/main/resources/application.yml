@@ -10,9 +10,19 @@ spring:
     username: sa
     password: ""
 
+  # スキーマは Flyway が正（src/main/resources/db/migration）。
+  # 既存DB（本番VM・ローカル）は ddl-auto=update が作った状態なので、V1 は実行せず
+  # 「適用済み」として記録する（baseline-on-migrate）。空DB では V1 から順に流れる。
+  flyway:
+    enabled: ${SPRING_FLYWAY_ENABLED:true}
+    baseline-on-migrate: true
+    baseline-version: 1
+
   jpa:
     hibernate:
-      ddl-auto: update
+      # Hibernate はもうスキーマを変更しない。エンティティと実スキーマがずれていたら
+      # 起動時に落とす（マイグレーションの書き忘れをここで検出する）。
+      ddl-auto: validate
     open-in-view: false
     properties:
       hibernate:
@@ -94,7 +104,7 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD}
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     open-in-view: false
   h2:
     console:
