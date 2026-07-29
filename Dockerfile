@@ -1,5 +1,5 @@
 # ---- Build stage ----
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3-eclipse-temurin-26 AS build
 WORKDIR /build
 
 # Cache dependencies first
@@ -11,7 +11,7 @@ COPY src ./src
 RUN mvn -q -B clean package -DskipTests
 
 # ---- Run stage ----
-FROM eclipse-temurin:21-jre AS runtime
+FROM eclipse-temurin:25-jre AS runtime
 WORKDIR /app
 COPY --from=build /build/target/ec-api-*.jar app.jar
 
