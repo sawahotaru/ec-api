@@ -1,7 +1,11 @@
 name: Deploy to lab.4510.be
 
-# このリポジトリの main が更新されたら、まず `mvn test` を回し、**通ったときだけ**
-# 統合ハブ oracle-lab のデプロイを起動する。
+# このリポジトリの main が更新されたら、まず検査（`mvn test` ＋ **Dockerイメージのビルドと
+# 起動確認**）を回し、**両方通ったときだけ** 統合ハブ oracle-lab のデプロイを起動する。
+#
+# ⚠ 2026-07-29 追加: 以前は `mvn test`（JDK21）だけがゲートで、**Dockerfile を一度も
+#   ビルドしていなかった**。そのためベースイメージの更新PR（JDK 21→26/25）は CI が緑でも
+#   実質未検証で、VMでビルドして初めて成否が分かる状態だった。image ジョブを足して塞いだ。
 # oracle-lab 側 (deploy-oracle.yml) が repository_dispatch: ec-api-updated を受け、
 # client_payload.service=ec-api を見て **ec-api サービスだけ** をVMで再ビルド/再起動する
 # （VMのビルド負荷を最小化する方式）。
@@ -44,9 +48,53 @@ jobs:
           path: target/surefire-reports/
           if-no-files-found: ignore
 
+  image:
+    name: docker build + 起動確認
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # レイヤキャッシュを効かせないと毎回 Maven の依存をゼロから取り直して数分かかる
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ec-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ビルドが通ることと起動することは別。JDKのベースイメージを上げたときに
+      # 効くのはこちら（バイトコード互換・JVMオプション・起動時の反射など）。
+      - name: 起動確認（既定プロファイル＝H2）
+        run: |
+          docker run -d --name ec-api-ci -p 18080:8080 ec-api:ci
+          for i in $(seq 1 36); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:18080/actuator/health || echo 000)
+            if [ "$code" = "200" ]; then echo "  起動成功（約$((i*5))秒）"; break; fi
+            sleep 5
+          done
+          body=$(curl -s --max-time 5 http://localhost:18080/actuator/health || true)
+          echo "  health: $body"
+          case "$body" in
+            *'"status":"UP"'*) echo "  ランタイム: $(docker exec ec-api-ci java -version 2>&1 | head -1)" ;;
+            *) echo "::error::イメージは作れたが起動しませんでした"; exit 1 ;;
+          esac
+
+      - name: 起動ログ（失敗時）
+        if: failure()
+        run: docker logs ec-api-ci 2>&1 | tail -120 || true
+
+      - name: 後片付け
+        if: always()
+        run: docker rm -f ec-api-ci || true
+
   notify:
     name: Trigger oracle-lab deploy
-    needs: test
+    needs: [test, image]
     # テストが通った main への push のときだけデプロイする（PR では走らせない）
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
