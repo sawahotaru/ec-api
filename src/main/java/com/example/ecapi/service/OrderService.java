@@ -11,6 +11,7 @@ import com.example.ecapi.domain.User;
 import com.example.ecapi.event.OrderCancelledEvent;
 import com.example.ecapi.event.OrderExpiredEvent;
 import com.example.ecapi.event.OrderPaidEvent;
+import com.example.ecapi.event.OrderPlacedEvent;
 import com.example.ecapi.exception.BadRequestException;
 import com.example.ecapi.exception.NotFoundException;
 import com.example.ecapi.repository.CartItemRepository;
@@ -80,6 +81,7 @@ public class OrderService {
 
         Order saved = orderRepository.save(order);
         cartItemRepository.deleteByUserId(user.getId());
+        events.publishEvent(OrderPlacedEvent.of(saved));
         return saved;
     }
 
@@ -107,7 +109,10 @@ public class OrderService {
         order.setStatus(OrderStatus.PENDING);
         buildAndReserve(order, ordered);
 
-        return orderRepository.save(order);
+        Order saved = orderRepository.save(order);
+        // ゲストはこの通知でしか照会トークンを持ち帰れない（画面のバナーは閉じれば消える）。
+        events.publishEvent(OrderPlacedEvent.of(saved));
+        return saved;
     }
 
     /**

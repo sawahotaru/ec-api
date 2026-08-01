@@ -17,6 +17,7 @@ import com.example.ecapi.event.OrderEvent;
 import com.example.ecapi.event.OrderEventListener;
 import com.example.ecapi.event.OrderExpiredEvent;
 import com.example.ecapi.event.OrderPaidEvent;
+import com.example.ecapi.event.OrderPlacedEvent;
 import com.example.ecapi.exception.BadRequestException;
 import com.example.ecapi.exception.NotFoundException;
 import com.example.ecapi.repository.CartItemRepository;
@@ -313,6 +314,47 @@ class OrderPaymentLifecycleTest {
                 .extracting(OrderPaidEvent::contactEmail).isEqualTo("guest@example.com");
     }
 
+    // --- 注文成立の通知（ゲストが照会トークンを持ち帰る唯一の経路） -------------
+
+    @Test
+    @DisplayName("ゲスト購入の placed イベントは照会トークンを運ぶ（確認メールの照会リンクの素）")
+    void guestCheckoutPublishesPlacedEventWithItsToken() {
+        Order order = orderService.guestCheckout("guest@example.com", Map.of(matcha.getId(), 2));
+
+        assertThat(recorder.placedEvents()).singleElement().satisfies(placed -> {
+            assertThat(placed.orderId()).isEqualTo(order.getId());
+            assertThat(placed.contactEmail()).isEqualTo("guest@example.com");
+            assertThat(placed.totalAmount()).isEqualByComparingTo("3240");
+            // ここが空になると、ゲストは注文に戻る手段を完全に失う
+            assertThat(placed.guestToken()).isEqualTo(order.getOrderToken()).isNotBlank();
+        });
+    }
+
+    @Test
+    @DisplayName("会員の checkout も placed を発行するが、トークンは載せない")
+    void memberCheckoutPublishesPlacedEventWithoutAToken() {
+        addToCart(matcha, 1);
+
+        orderService.checkout(buyer);
+
+        assertThat(recorder.placedEvents()).singleElement().satisfies(placed -> {
+            assertThat(placed.contactEmail()).isEqualTo("buyer@example.com");
+            assertThat(placed.guestToken()).isNull();
+        });
+    }
+
+    @Test
+    @DisplayName("在庫不足でロールバックした注文では placed は配られない（AFTER_COMMIT の契約）")
+    void rolledBackCheckoutPublishesNothing() {
+        Map<Long, Integer> lines = new LinkedHashMap<>();
+        lines.put(yunomi.getId(), 4);   // 在庫3
+
+        assertThatThrownBy(() -> orderService.guestCheckout("guest@example.com", lines))
+                .isInstanceOf(BadRequestException.class);
+
+        assertThat(recorder.placedEvents()).isEmpty();
+    }
+
     // --- ゲスト注文の照会（トークンがログインの代わりになる） -------------------
     // 画面（#/orders/guest）がこの経路に乗るので、「トークンが鍵として正しく効くか」を固定する。
 
@@ -447,6 +489,11 @@ class OrderPaymentLifecycleTest {
         List<OrderExpiredEvent> expiredEvents() {
             return received.stream().filter(OrderExpiredEvent.class::isInstance)
                     .map(OrderExpiredEvent.class::cast).toList();
+        }
+
+        List<OrderPlacedEvent> placedEvents() {
+            return received.stream().filter(OrderPlacedEvent.class::isInstance)
+                    .map(OrderPlacedEvent.class::cast).toList();
         }
 
         List<OrderCancelledEvent> cancelledEvents() {

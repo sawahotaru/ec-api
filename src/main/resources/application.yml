@@ -33,6 +33,10 @@ spring:
       enabled: true
 
 app:
+  # 店舗フロントの公開URL（末尾スラッシュ不要。VM では context-path を含めて "/ec" まで）。
+  # メール等の外向き通知に載せる絶対リンクの組み立てに使う。未設定でも動くが、
+  # ゲスト注文メールは直リンクの代わりに注文番号＋トークンの手入力案内になる。
+  public-base-url: ${PUBLIC_BASE_URL:}
   jwt:
     # Overridden by APP_JWT_SECRET in production. Must be >= 32 bytes for HS256.
     secret: ${APP_JWT_SECRET:change-me-in-production-please-32bytes-minimum-secret}

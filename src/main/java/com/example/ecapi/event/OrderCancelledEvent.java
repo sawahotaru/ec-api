@@ -8,12 +8,13 @@ public record OrderCancelledEvent(
         Long orderId,
         String contactEmail,
         BigDecimal totalAmount,
+        String guestToken,
         /** キャンセル前のステータス。未払いキャンセルと支払後キャンセルを区別できる。 */
         String previousStatus) implements OrderEvent {
 
     public static OrderCancelledEvent of(Order order, String previousStatus) {
         return new OrderCancelledEvent(order.getId(), order.getContactEmail(),
-                order.getTotalAmount(), previousStatus);
+                order.getTotalAmount(), order.getOrderToken(), previousStatus);
     }
 
     @Override

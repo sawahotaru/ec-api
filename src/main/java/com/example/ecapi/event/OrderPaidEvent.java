@@ -11,12 +11,13 @@ public record OrderPaidEvent(
         Long orderId,
         String contactEmail,
         BigDecimal totalAmount,
+        String guestToken,
         /** 支払いに使われた決済手段の id（{@code "stripe"} 等）。手動確定なら null。 */
         String paymentProviderId) implements OrderEvent {
 
     public static OrderPaidEvent of(Order order) {
         return new OrderPaidEvent(order.getId(), order.getContactEmail(),
-                order.getTotalAmount(), order.getPaymentProvider());
+                order.getTotalAmount(), order.getOrderToken(), order.getPaymentProvider());
     }
 
     @Override

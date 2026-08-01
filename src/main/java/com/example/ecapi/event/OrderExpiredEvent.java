@@ -10,10 +10,12 @@ import java.math.BigDecimal;
 public record OrderExpiredEvent(
         Long orderId,
         String contactEmail,
-        BigDecimal totalAmount) implements OrderEvent {
+        BigDecimal totalAmount,
+        String guestToken) implements OrderEvent {
 
     public static OrderExpiredEvent of(Order order) {
-        return new OrderExpiredEvent(order.getId(), order.getContactEmail(), order.getTotalAmount());
+        return new OrderExpiredEvent(order.getId(), order.getContactEmail(),
+                order.getTotalAmount(), order.getOrderToken());
     }
 
     @Override
