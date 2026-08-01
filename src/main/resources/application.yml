@@ -91,6 +91,15 @@ springdoc:
 
 server:
   port: ${PORT:8080}
+  # リバースプロキシ配下では X-Forwarded-Proto/Host を尊重して自分のURLを組み立てる。
+  # これが none（既定）だと、HTTPS で配信していても Swagger の "Servers" が
+  # http://… になり、HTTPS のページからの Try it out が混在コンテンツとして
+  # ブラウザにブロックされる（本番 /ec/ で実際に踏んだ）。
+  #
+  # ⚠️ 既定は none のまま。転送ヘッダは詐称できるので、アプリに直接届く経路がある
+  #    構成で有効にしてはいけない。VM では ec-api はポートを公開せず Caddy 経由でしか
+  #    到達できないため framework を渡している。
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:none}
   # Empty locally (served at "/"); set to "/ec" on the Oracle VM so the app
   # lives at lab.4510.be/ec/ alongside clinic at /clinic-reservation/.
   servlet:
