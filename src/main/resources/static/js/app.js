@@ -5,6 +5,17 @@ const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 const yen = (n) => "¥" + Number(n || 0).toLocaleString("ja-JP", { maximumFractionDigits: 0 });
 
+// OrderStatus (server enum) → 買い手向けの日本語。未知の値はそのまま出す。
+const STATUS_LABEL = {
+    PENDING: "お支払い待ち",
+    PAID: "支払い済み",
+    SHIPPED: "発送済み",
+    DELIVERED: "配達済み",
+    CANCELLED: "キャンセル",
+    EXPIRED: "期限切れ",
+};
+function statusLabel(status) { return STATUS_LABEL[status] || status; }
+
 // The app can be served at the site root ("/") locally or under a sub-path
 // (e.g. "/ec/" behind Caddy on the Oracle VM). Derive the base from this
 // script's own URL — <BASE>/js/app.js — so no build-time config is needed.
@@ -122,12 +133,25 @@ function guestCartView() {
     };
 }
 
+/* Orders placed as a guest, remembered on THIS browser only. The server has no way
+   to list them (there is no account), so the id+token pair kept here is the whole
+   convenience layer behind 「注文照会」. It is also the reason the screen offers a
+   delete button: on a shared machine the tokens are the credential. */
+function guestOrderLog() {
+    try { return JSON.parse(localStorage.getItem(GUEST_ORDERS_KEY)) || []; }
+    catch { return []; }
+}
+function saveGuestOrderLog(list) { localStorage.setItem(GUEST_ORDERS_KEY, JSON.stringify(list.slice(0, 20))); }
+
 function rememberGuestOrder(order) {
     if (!order || !order.orderToken) return;
-    let list;
-    try { list = JSON.parse(localStorage.getItem(GUEST_ORDERS_KEY)) || []; } catch { list = []; }
+    const list = guestOrderLog().filter((o) => o.id !== order.id);
     list.unshift({ id: order.id, token: order.orderToken, total: order.totalAmount, at: order.createdAt });
-    localStorage.setItem(GUEST_ORDERS_KEY, JSON.stringify(list.slice(0, 20)));
+    saveGuestOrderLog(list);
+}
+
+function forgetGuestOrder(id) {
+    saveGuestOrderLog(guestOrderLog().filter((o) => o.id !== id));
 }
 
 /* ---------- products ---------- */
@@ -192,6 +216,16 @@ function currentRoute() {
     const m = path.match(/^\/product\/(\d+)$/);
     if (m) return { name: "product", id: Number(m[1]) };
     if (path === "/admin") return { name: "admin" };
+    // Guest order lookup. The id+token form is a deep link, so the guest can bookmark
+    // one order — the token IS the credential, exactly as in the API.
+    const g = path.match(/^\/orders\/guest(?:\/(\d+)\/([^/]+))?$/);
+    if (g) {
+        return {
+            name: "guestOrders",
+            id: g[1] ? Number(g[1]) : null,
+            token: g[2] ? decodeURIComponent(g[2]) : null,
+        };
+    }
     return { name: "home" };
 }
 
@@ -199,15 +233,18 @@ async function route() {
     const r = currentRoute();
     if (r.name === "product") await showDetail(r.id);
     else if (r.name === "admin") await showAdmin();
+    else if (r.name === "guestOrders") await showGuestOrders(r.id, r.token);
     else showGrid();
 }
 
-// Exactly one of grid / detail / admin is visible at a time.
+// Exactly one of grid / detail / admin / guest-lookup is visible at a time.
 function hideViews() {
     $("#productDetail").classList.add("hidden");
     $("#productDetail").innerHTML = "";
     $("#adminPanel").classList.add("hidden");
     $("#adminPanel").innerHTML = "";
+    $("#guestOrders").classList.add("hidden");
+    $("#guestOrders").innerHTML = "";
     $("#grid").classList.add("hidden");
     $("#emptyState").classList.add("hidden");
 }
@@ -435,6 +472,129 @@ async function afterTaxChange(msg) {
     toast(msg);
 }
 
+/* ---------- guest order lookup (#/orders/guest) ----------
+   Wraps GET /api/orders/guest/{id}?token=… — the one public endpoint that had no UI.
+   Without this screen the orderToken was shown once in the checkout banner and then
+   effectively lost, so a guest could never come back to check or pay an order. */
+
+async function showGuestOrders(id, token) {
+    hideViews();
+    const box = $("#guestOrders");
+    box.classList.remove("hidden");
+    box.innerHTML = guestLookupShellHtml(id, token);
+    window.scrollTo({ top: 0 });
+    if (!id || !token) return;
+
+    const res = $("#lookupResult");
+    res.innerHTML = '<p class="empty">照会中…</p>';
+    try {
+        const order = await api(`/api/orders/guest/${id}?token=${encodeURIComponent(token)}`);
+        res.innerHTML = guestOrderCardHtml(order, token);
+    } catch {
+        // The API answers 404 for both "no such order" and "wrong token", so a single
+        // message is honest here and does not reveal which order ids exist.
+        res.innerHTML = `<p class="lookup-error">注文が見つかりませんでした。注文番号と照会用トークンをご確認ください。</p>`;
+    }
+}
+
+function guestLookupShellHtml(id, token) {
+    const saved = guestOrderLog();
+    const rows = saved.map((o) => {
+        const when = o.at ? new Date(o.at).toLocaleString("ja-JP") : "";
+        return `
+        <div class="lookup-row">
+            <div class="lookup-row-main">
+                <strong>注文 #${o.id}</strong>
+                <span class="lmeta">${escapeHtml(when)}${o.total != null ? " / " + yen(o.total) : ""}</span>
+            </div>
+            <div class="lookup-row-actions">
+                <button class="btn ghost sm" data-act="open-guest-order" data-id="${o.id}">開く</button>
+                <button class="link-danger" data-act="forget-guest-order" data-id="${o.id}">記録を削除</button>
+            </div>
+        </div>`;
+    }).join("");
+
+    const savedSection = saved.length === 0 ? "" : `
+        <section class="admin-card">
+            <h2>この端末に記録された注文</h2>
+            <p class="hint">ご注文時にこのブラウザへ保存されたものです。<strong>サーバーには一覧がありません</strong>（アカウントが無いため）。
+               共用のパソコンでは、確認後に記録を削除してください。</p>
+            ${rows}
+            <button class="linklike" data-act="forget-all-guest-orders">この端末の記録をすべて削除する</button>
+        </section>`;
+
+    return `
+        <a href="#/" class="back-link">← 商品一覧へ戻る</a>
+        <h1 class="admin-title">🔎 注文照会（ゲスト）</h1>
+
+        <section class="admin-card">
+            <h2>注文番号とトークンで照会</h2>
+            <p class="hint">ゲスト購入の際にお伝えした<strong>注文番号</strong>と<strong>照会用トークン</strong>を入力してください。
+               ログインは不要です。</p>
+            <form id="lookupForm" class="lookup-form">
+                <label class="field">
+                    <span>注文番号</span>
+                    <input id="lookupId" type="number" min="1" inputmode="numeric" placeholder="12"
+                           value="${id != null ? id : ""}" required>
+                </label>
+                <label class="field">
+                    <span>照会用トークン</span>
+                    <input id="lookupToken" type="text" autocomplete="off" spellcheck="false"
+                           placeholder="00000000-0000-0000-0000-000000000000"
+                           value="${token ? escapeHtml(token) : ""}" required>
+                </label>
+                <button type="submit" class="btn">照会する</button>
+            </form>
+        </section>
+
+        ${savedSection}
+
+        <div id="lookupResult"></div>`;
+}
+
+function guestOrderCardHtml(order, token) {
+    const when = new Date(order.createdAt).toLocaleString("ja-JP");
+    const lines = order.items.map((i) =>
+        `<div class="lmeta">${escapeHtml(i.productName)} × ${i.quantity} — ${yen(i.lineTotal)}</div>`).join("");
+    // The lookup response never carries the token back, so reuse the one we came in with.
+    const pay = order.status === "PENDING" ? payButtonsHtml(order.id, token) : "";
+    const note = order.status === "EXPIRED"
+        ? '<p class="hint" style="text-align:left">お支払い期限が過ぎたため、確保していた在庫は解放されました。お手数ですが再度ご注文ください。</p>'
+        : "";
+    return `
+        <section class="admin-card">
+            <div class="oh">
+                <strong>注文 #${order.id}</strong>
+                <span class="badge ${escapeHtml(order.status)}">${escapeHtml(statusLabel(order.status))}</span>
+            </div>
+            <div class="lmeta">${escapeHtml(when)} / ${escapeHtml(order.userEmail || "")}</div>
+            <div style="margin-top:8px">${lines}</div>
+            ${taxBreakdownHtml(order)}
+            ${note}
+            ${pay}
+        </section>`;
+}
+
+function guestLookupLink(id, token) {
+    return `#/orders/guest/${id}/${encodeURIComponent(token)}`;
+}
+
+function submitGuestLookup(e) {
+    e.preventDefault();
+    const id = $("#lookupId").value.trim();
+    const token = $("#lookupToken").value.trim();
+    if (!id || !token) { toast("注文番号とトークンを入力してください"); return; }
+    // Route rather than fetch directly: the result becomes a bookmarkable URL and
+    // the browser Back button behaves.
+    location.hash = guestLookupLink(Number(id), token);
+}
+
+function openSavedGuestOrder(id) {
+    const hit = guestOrderLog().find((o) => o.id === id);
+    if (!hit) { toast("記録が見つかりません"); return; }
+    location.hash = guestLookupLink(hit.id, hit.token);
+}
+
 /* ---------- auth ---------- */
 function isLoggedIn() { return !!state.token; }
 
@@ -443,6 +603,8 @@ function reflectAuth() {
     $("#authBtn").classList.toggle("hidden", logged);
     $("#logoutBtn").classList.toggle("hidden", !logged);
     $("#ordersBtn").classList.toggle("hidden", !logged);
+    // Members already have 注文履歴; 注文照会 is the guest-only equivalent.
+    $("#guestOrdersBtn").classList.toggle("hidden", logged);
     $("#adminBtn").classList.toggle("hidden", !isAdmin());
     const label = $("#userLabel");
     label.classList.toggle("hidden", !logged);
@@ -733,7 +895,7 @@ function renderOrders(orders) {
         <div class="order-block">
             <div class="oh">
                 <strong>注文 #${o.id}</strong>
-                <span class="badge ${o.status}">${o.status}</span>
+                <span class="badge ${escapeHtml(o.status)}">${escapeHtml(statusLabel(o.status))}</span>
             </div>
             <div class="lmeta">${when}</div>
             ${lines}
@@ -755,10 +917,17 @@ function taxBreakdownHtml(order) {
 
 function showOrderResult(order) {
     const banner = $("#banner");
-    let html = `✅ 注文 #${order.id} を受け付けました（状態 ${order.status}）。`;
+    let html = `✅ 注文 #${order.id} を受け付けました（状態 ${escapeHtml(statusLabel(order.status))}）。`;
     html += taxBreakdownHtml(order);
     if (order.guest && order.orderToken) {
-        html += `<div class="hint" style="margin-top:6px">照会・支払い用トークン: <code>${escapeHtml(order.orderToken)}</code><br>ログインなしで注文を追跡できます。大切に保管してください。</div>`;
+        // The token is shown once here, but it is also stored on this browser and the
+        // link below reaches the order again — so closing this banner is not fatal.
+        html += `<div class="hint" style="margin-top:6px;text-align:left">
+            照会・支払い用トークン: <code>${escapeHtml(order.orderToken)}</code><br>
+            ログインなしで注文を追跡できます。大切に保管してください。<br>
+            <a href="${guestLookupLink(order.id, order.orderToken)}">🔎 この注文の照会ページを開く</a>
+            （このブラウザなら「注文照会」からいつでも開けます）
+        </div>`;
     }
     if (state.paymentsEnabled && order.status === "PENDING") {
         html += " " + payButtonsHtml(order.id, order.guest && order.orderToken ? order.orderToken : null);
@@ -821,6 +990,7 @@ function bind() {
         openDrawer("#cartDrawer");
     });
     $("#ordersBtn").addEventListener("click", openOrders);
+    $("#guestOrdersBtn").addEventListener("click", () => { closeDrawers(); location.hash = "#/orders/guest"; });
     $("#adminBtn").addEventListener("click", () => { location.hash = "#/admin"; });
     $("#checkoutBtn").addEventListener("click", checkout);
 
@@ -837,6 +1007,11 @@ function bind() {
     });
 
     $("#scrim").addEventListener("click", closeDrawers);
+
+    // The lookup form lives inside a re-rendered view, so delegate (submit bubbles).
+    document.body.addEventListener("submit", (e) => {
+        if (e.target.id === "lookupForm") submitGuestLookup(e);
+    });
 
     document.body.addEventListener("click", (e) => {
         const el = e.target.closest("[data-close]");
@@ -857,6 +1032,21 @@ function bind() {
             const kind = act.dataset.act;
             if (kind === "mode") { setPricingMode(act.dataset.mode); return; }
             if (kind === "add-rate") { addRate(); return; }
+            if (kind === "open-guest-order") { openSavedGuestOrder(Number(act.dataset.id)); return; }
+            if (kind === "forget-guest-order") {
+                forgetGuestOrder(Number(act.dataset.id));
+                route();                       // repaint the list without this entry
+                toast("記録を削除しました");
+                return;
+            }
+            if (kind === "forget-all-guest-orders") {
+                if (!window.confirm("この端末に記録された注文をすべて削除しますか？\n（注文自体は取り消されません。トークンを控えていないと再照会できなくなります）")) return;
+                saveGuestOrderLog([]);
+                // Leave a deep link if we were on one; repaint in place otherwise.
+                if (location.hash === "#/orders/guest") route(); else location.hash = "#/orders/guest";
+                toast("記録を削除しました");
+                return;
+            }
             const tr = act.closest("tr[data-rate]");
             if (tr && kind === "save-rate") { saveRate(tr); return; }
             if (tr && kind === "del-rate") { deleteRate(tr); return; }

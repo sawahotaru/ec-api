@@ -173,6 +173,21 @@ main { max-width: 1140px; margin: 0 auto; padding: 22px 20px 80px; }
 .badge.PAID { background: #dcfce7; color: #166534; }
 .badge.SHIPPED, .badge.DELIVERED { background: #dbeafe; color: #1e40af; }
 .badge.CANCELLED { background: #fee2e2; color: #991b1b; }
+/* Auto-cancelled by the expiry sweep — neutral, since nobody chose it. */
+.badge.EXPIRED { background: #e5e7eb; color: #4b5563; }
+
+/* Guest order lookup (#/orders/guest) — reuses .admin-card for the panels. */
+.lookup { max-width: 900px; margin: 0 auto; }
+.lookup .oh { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.lookup-form { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-top: 12px; }
+.lookup-form .field { margin-bottom: 0; }
+.lookup-form .field:first-child { width: 130px; }
+.lookup-form .field:nth-child(2) { flex: 1; min-width: 260px; }
+.lookup-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.lookup-row:last-of-type { border-bottom: none; }
+.lookup-row-main { display: flex; align-items: baseline; gap: 10px; }
+.lookup-row-actions { display: flex; align-items: center; gap: 10px; }
+.lookup-error { color: var(--danger); font-size: 14px; text-align: center; padding: 24px 0; }
 
 /* Modal */
 .modal { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(15, 23, 42, .45); padding: 20px; }

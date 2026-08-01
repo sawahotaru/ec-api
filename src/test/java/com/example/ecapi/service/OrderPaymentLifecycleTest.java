@@ -18,6 +18,7 @@ import com.example.ecapi.event.OrderEventListener;
 import com.example.ecapi.event.OrderExpiredEvent;
 import com.example.ecapi.event.OrderPaidEvent;
 import com.example.ecapi.exception.BadRequestException;
+import com.example.ecapi.exception.NotFoundException;
 import com.example.ecapi.repository.CartItemRepository;
 import com.example.ecapi.repository.CategoryRepository;
 import com.example.ecapi.repository.OrderRepository;
@@ -310,6 +311,65 @@ class OrderPaymentLifecycleTest {
         // イベントの連絡先はゲストの入力メール（会員なら口座メール）
         assertThat(recorder.paidEvents()).singleElement()
                 .extracting(OrderPaidEvent::contactEmail).isEqualTo("guest@example.com");
+    }
+
+    // --- ゲスト注文の照会（トークンがログインの代わりになる） -------------------
+    // 画面（#/orders/guest）がこの経路に乗るので、「トークンが鍵として正しく効くか」を固定する。
+
+    @Test
+    @DisplayName("ゲスト注文は 注文ID + 正しいトークン で引ける")
+    void guestOrderCanBeLookedUpWithItsToken() {
+        Order order = orderService.guestCheckout("guest@example.com", Map.of(matcha.getId(), 1));
+
+        Order found = orderService.getGuestOrder(order.getId(), order.getOrderToken());
+
+        assertThat(found.getId()).isEqualTo(order.getId());
+        assertThat(found.getContactEmail()).isEqualTo("guest@example.com");
+        assertThat(found.getItems()).singleElement()
+                .extracting(item -> item.getProductName()).isEqualTo("宇治抹茶 30g");
+    }
+
+    @Test
+    @DisplayName("トークンが違えば引けない（注文IDを総当たりされても中身は漏れない）")
+    void guestOrderLookupRejectsAWrongToken() {
+        Order order = orderService.guestCheckout("guest@example.com", Map.of(matcha.getId(), 1));
+
+        assertThatThrownBy(() -> orderService.getGuestOrder(order.getId(), "not-the-token"))
+                .isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("他人の注文のトークンでは引けない（トークンは注文ごとに紐づく）")
+    void guestOrderLookupIsScopedToItsOwnOrder() {
+        Order mine = orderService.guestCheckout("a@example.com", Map.of(matcha.getId(), 1));
+        Order theirs = orderService.guestCheckout("b@example.com", Map.of(matcha.getId(), 1));
+
+        assertThat(mine.getOrderToken()).isNotEqualTo(theirs.getOrderToken());
+        assertThatThrownBy(() -> orderService.getGuestOrder(mine.getId(), theirs.getOrderToken()))
+                .isInstanceOf(NotFoundException.class);
+    }
+
+    @Test
+    @DisplayName("トークン未指定は 400（空文字で全件が引けたりしない）")
+    void guestOrderLookupRequiresAToken() {
+        Order order = orderService.guestCheckout("guest@example.com", Map.of(matcha.getId(), 1));
+
+        assertThatThrownBy(() -> orderService.getGuestOrder(order.getId(), "  "))
+                .isInstanceOf(BadRequestException.class);
+        assertThatThrownBy(() -> orderService.getGuestOrder(order.getId(), null))
+                .isInstanceOf(BadRequestException.class);
+    }
+
+    @Test
+    @DisplayName("期限切れ後も注文自体は照会できる（状態が EXPIRED として見える）")
+    void expiredGuestOrderIsStillVisibleToItsOwner() {
+        Order order = orderService.guestCheckout("guest@example.com", Map.of(matcha.getId(), 2));
+        orderService.expireStalePendingOrders(Instant.now().plusSeconds(60));
+
+        Order found = orderService.getGuestOrder(order.getId(), order.getOrderToken());
+
+        assertThat(found.getStatus()).isEqualTo(OrderStatus.EXPIRED);
+        assertThat(reserved(matcha)).isZero();   // 引当は解放済み
     }
 
     // --- helpers --------------------------------------------------------------
