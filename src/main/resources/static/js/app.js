@@ -300,20 +300,21 @@ async function showAdmin() {
     }
     box.innerHTML = '<p class="empty">読み込み中…</p>';
     try {
-        const [settings, rates, products, coupons] = await Promise.all([
+        const [settings, rates, products, coupons, stats] = await Promise.all([
             api("/api/admin/settings", { auth: true }),
             api("/api/admin/tax-rates", { auth: true }),
             api("/api/products?size=100&sort=id"),
             api("/api/admin/coupons", { auth: true }),
+            api("/api/admin/stats?months=12", { auth: true }),
         ]);
-        renderAdmin(settings, rates, products.content || [], coupons || []);
+        renderAdmin(settings, rates, products.content || [], coupons || [], stats);
     } catch (ex) {
         box.innerHTML = `<a href="#/" class="back-link">← 商品一覧へ戻る</a>
             <p class="empty">管理情報を取得できませんでした: ${escapeHtml(ex.message)}</p>`;
     }
 }
 
-function renderAdmin(settings, rates, products, coupons) {
+function renderAdmin(settings, rates, products, coupons, stats) {
     const mode = settings.pricingMode;
     const today = new Date().toISOString().slice(0, 10);
     // Sort so the effective-date timeline reads top-down per category.
@@ -345,6 +346,8 @@ function renderAdmin(settings, rates, products, coupons) {
     $("#adminPanel").innerHTML = `
         <a href="#/" class="back-link">← 商品一覧へ戻る</a>
         <h1 class="admin-title">⚙️ ストア管理</h1>
+
+        ${statsCardHtml(stats)}
 
         <section class="admin-card">
             <h2>税の表示方式</h2>
@@ -387,6 +390,100 @@ function renderAdmin(settings, rates, products, coupons) {
         ${couponsCardHtml(coupons || [], today)}
 
         ${productImagesCardHtml(products || [])}`;
+}
+
+/* ---------- stats ----------
+   売上に数えるのは支払い済み（PAID / SHIPPED / DELIVERED）だけ。未払い・失効は
+   件数として別に出す。「注文が入った数」と「売れた数」を1つの数字に混ぜない。 */
+
+const STATUS_ORDER = ["PENDING", "PAID", "SHIPPED", "DELIVERED", "CANCELLED", "EXPIRED"];
+
+function statsCardHtml(stats) {
+    if (!stats) return "";
+    if (!stats.paidOrders && !stats.pendingOrders && !stats.lostOrders) {
+        return `<section class="admin-card"><h2>売上</h2>
+            <p class="hint">注文がまだありません。</p></section>`;
+    }
+
+    const tile = (label, value, note) => `
+        <div class="stat-tile">
+            <span class="stat-tile-label">${label}</span>
+            <strong>${value}</strong>
+            <span class="stat-tile-note">${note}</span>
+        </div>`;
+
+    const maxRevenue = Math.max(...stats.monthly.map((m) => Number(m.revenue)), 0);
+    const months = stats.monthly.map((m) => bar(m.month, Number(m.revenue), maxRevenue, yen(m.revenue),
+        `${m.orders}件`)).join("");
+
+    const statuses = STATUS_ORDER
+        .map((s) => stats.statuses.find((x) => x.status === s))
+        .filter(Boolean)
+        .map((s) => `<tr><td>${escapeHtml(statusLabel(s.status))}</td><td>${s.orders}件</td>
+            <td>${REVENUE_STATUSES.includes(s.status) ? yen(s.amount) : "—"}</td></tr>`).join("");
+
+    const maxQty = Math.max(...stats.products.map((p) => p.quantity), 0);
+    const products = stats.products.slice(0, 10)
+        .map((p) => bar(p.productName, p.quantity, maxQty, yen(p.revenue), `${p.quantity}点`)).join("");
+
+    const providers = stats.providers.map((p) =>
+        `<tr><td>${escapeHtml(p.provider)}</td><td>${p.orders}件</td><td>${yen(p.revenue)}</td></tr>`).join("");
+
+    const coupons = stats.coupons.map((c) =>
+        `<tr><td>${escapeHtml(c.code)}</td><td>${c.orders}件</td><td>−${yen(c.discount)}</td></tr>`).join("");
+
+    return `
+        <section class="admin-card">
+            <h2>売上</h2>
+            <p class="hint">金額に入るのは<strong>支払い済みの注文だけ</strong>です（未払い・失効・キャンセルは
+               件数のみ）。金額は注文時のスナップショットから積んでいるので、
+               あとから価格や商品名を変えても<strong>過去の数字は動きません</strong>。</p>
+            <div class="stat-tiles">
+                ${tile("売上（税込）", yen(stats.revenue), `${stats.paidOrders}件`)}
+                ${tile("平均注文単価", yen(stats.averageOrder), "支払い済みの平均")}
+                ${tile("お支払い待ち", stats.pendingOrders + "<small>件</small>", "在庫を確保中")}
+                ${tile("失効・キャンセル", stats.lostOrders + "<small>件</small>", "機会損失")}
+                ${tile("売上になった割合", stats.conversionRate + "<small>%</small>", "全注文のうち")}
+                ${tile("割引の合計", "−" + yen(stats.discountTotal), "クーポン")}
+            </div>
+
+            <h3>月ごとの売上（直近12ヶ月）</h3>
+            ${months}
+
+            <h3>注文の状態</h3>
+            <div class="table-wrap"><table class="admin-table">
+                <thead><tr><th>状態</th><th>件数</th><th>金額</th></tr></thead>
+                <tbody>${statuses}</tbody>
+            </table></div>
+
+            ${stats.products.length ? `<h3>よく売れている商品</h3>${products}` : ""}
+
+            ${providers ? `<h3>決済手段別</h3>
+            <div class="table-wrap"><table class="admin-table">
+                <thead><tr><th>手段</th><th>件数</th><th>売上</th></tr></thead>
+                <tbody>${providers}</tbody>
+            </table></div>` : ""}
+
+            ${coupons ? `<h3>クーポンの利用</h3>
+            <div class="table-wrap"><table class="admin-table">
+                <thead><tr><th>コード</th><th>利用</th><th>割引額</th></tr></thead>
+                <tbody>${coupons}</tbody>
+            </table></div>` : ""}
+        </section>`;
+}
+
+const REVENUE_STATUSES = ["PAID", "SHIPPED", "DELIVERED"];
+
+/* 棒グラフ1行。外部のグラフライブラリを入れないのは、このフロントが依存ゼロの
+   バニラJSであることに価値があるため（配布物としてビルド工程が要らない）。 */
+function bar(label, value, max, valueText, note) {
+    const pct = max > 0 ? Math.round((value / max) * 100) : 0;
+    return `
+        <div class="stat-row">
+            <span class="stat-label" title="${escapeHtml(label)}">${escapeHtml(label)}</span>
+            <span class="stat-bar"><span class="stat-fill" style="width:${pct}%"></span></span>
+            <span class="stat-value">${valueText}${note ? `<small>${escapeHtml(note)}</small>` : ""}</span>
+        </div>`;
 }
 
 /* ---------- shipping ---------- */
