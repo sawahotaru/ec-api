@@ -3,6 +3,7 @@ package com.example.ecapi.controller;
 import com.example.ecapi.dto.TaxDtos.PricingModeRequest;
 import com.example.ecapi.dto.TaxDtos.SettingsResponse;
 import com.example.ecapi.dto.TaxDtos.ShippingSettingsRequest;
+import com.example.ecapi.privacy.DemoProperties;
 import com.example.ecapi.service.SettingService;
 import com.example.ecapi.service.ShippingSettings;
 import io.swagger.v3.oas.annotations.Operation;
@@ -26,10 +27,13 @@ public class AdminSettingsController {
 
     private final SettingService settingService;
     private final ShippingSettings shippingSettings;
+    private final DemoProperties demo;
 
-    public AdminSettingsController(SettingService settingService, ShippingSettings shippingSettings) {
+    public AdminSettingsController(SettingService settingService, ShippingSettings shippingSettings,
+                                   DemoProperties demo) {
         this.settingService = settingService;
         this.shippingSettings = shippingSettings;
+        this.demo = demo;
     }
 
     @Operation(summary = "現在のストア設定")
@@ -59,6 +63,7 @@ public class AdminSettingsController {
         return new SettingsResponse(
                 settingService.getPricingMode().name(),
                 shippingSettings.fee(),
-                shippingSettings.freeThreshold());
+                shippingSettings.freeThreshold(),
+                demo.isReadOnly());
     }
 }

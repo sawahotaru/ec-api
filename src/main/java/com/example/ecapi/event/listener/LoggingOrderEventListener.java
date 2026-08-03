@@ -3,6 +3,7 @@ package com.example.ecapi.event.listener;
 import com.example.ecapi.event.OrderEvent;
 import com.example.ecapi.event.OrderEventListener;
 import com.example.ecapi.event.OrderPaidEvent;
+import com.example.ecapi.privacy.ContactMask;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -22,10 +23,10 @@ public class LoggingOrderEventListener implements OrderEventListener {
             log.info("[order-audit] order={} event={} total={} via={} contact={}",
                     paid.orderId(), paid.type(), paid.totalAmount(),
                     paid.paymentProviderId() != null ? paid.paymentProviderId() : "manual",
-                    mask(paid.contactEmail()));
+                    ContactMask.maskForLog(paid.contactEmail()));
         } else {
             log.info("[order-audit] order={} event={} total={} contact={}",
-                    event.orderId(), event.type(), event.totalAmount(), mask(event.contactEmail()));
+                    event.orderId(), event.type(), event.totalAmount(), ContactMask.maskForLog(event.contactEmail()));
         }
     }
 
@@ -34,15 +35,4 @@ public class LoggingOrderEventListener implements OrderEventListener {
         return 10;
     }
 
-    /** ログに生のメールアドレスを残さない（ログは平文で長期保存されるため）。 */
-    private String mask(String email) {
-        if (email == null || email.isBlank()) {
-            return "-";
-        }
-        int at = email.indexOf('@');
-        if (at <= 1) {
-            return "***" + (at >= 0 ? email.substring(at) : "");
-        }
-        return email.charAt(0) + "***" + email.substring(at);
-    }
 }

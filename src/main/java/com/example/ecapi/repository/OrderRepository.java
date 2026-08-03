@@ -27,6 +27,9 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     /** Orders in a given status placed before a cut-off — used to expire stale holds. */
     List<Order> findByStatusAndCreatedAtBefore(OrderStatus status, Instant cutoff);
 
+    /** ゲストの連絡先がまだ残っている古い注文 — 保持期間を過ぎたら伏せる（公開デモ向け）。 */
+    List<Order> findByGuestEmailIsNotNullAndCreatedAtBefore(Instant cutoff);
+
     /* ---------- 集計（管理画面の売上統計） ----------
        いずれも DB 側で集約する。件数が増えても定数メモリで済むうえ、
        「全注文を読んで Java で足す」実装は本番だけ遅くなる類の問題を持ち込むため。

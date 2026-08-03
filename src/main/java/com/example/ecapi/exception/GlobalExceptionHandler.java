@@ -32,9 +32,24 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, ex.getMessage());
     }
 
+    @ExceptionHandler(TooManyAttemptsException.class)
+    public ResponseEntity<Map<String, Object>> handleTooManyAttempts(TooManyAttemptsException ex) {
+        return build(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage());
+    }
+
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<Map<String, Object>> handleAuth(AuthenticationException ex) {
         return build(HttpStatus.UNAUTHORIZED, ex.getMessage());
+    }
+
+    /**
+     * 「この環境では誰にもできない」種類の拒否（読み取り専用デモなど）。
+     * {@link AccessDeniedException} と分けてあるのは、ログインし直しても解決しないことを
+     * メッセージで伝えるため。
+     */
+    @ExceptionHandler(ForbiddenException.class)
+    public ResponseEntity<Map<String, Object>> handleForbidden(ForbiddenException ex) {
+        return build(HttpStatus.FORBIDDEN, ex.getMessage());
     }
 
     @ExceptionHandler(AccessDeniedException.class)

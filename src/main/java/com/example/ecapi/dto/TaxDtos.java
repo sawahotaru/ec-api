@@ -52,7 +52,10 @@ public final class TaxDtos {
     public record SettingsResponse(
             String pricingMode,
             BigDecimal shippingFee,
-            BigDecimal shippingFreeThreshold) {
+            BigDecimal shippingFreeThreshold,
+            // 公開デモの読み取り専用フラグ。画面が「押しても保存されない」状態を
+            // 黙って作らないよう、管理画面に伝えるために返す。
+            boolean readOnly) {
     }
 
     /** Admin: 送料と「送料無料になる金額」。0 を渡せば「送料なし」「無料設定なし」。 */

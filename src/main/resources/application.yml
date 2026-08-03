@@ -52,6 +52,24 @@ app:
     dir: ${APP_UPLOADS_DIR:./data/uploads}
     # 1ファイルの上限（バイト）。spring.servlet.multipart 側と揃える。
     max-bytes: ${APP_UPLOADS_MAX_BYTES:2097152}
+  demo:
+    # 「公開デモである」ことに由来する制限。**3つとも既定は無効**（配布物として持ち出した人の
+    # 環境で、説明も無く管理機能が使えないのは機能欠陥にしか見えない）。
+    # 管理画面を隠すのではなく「壊す価値・盗む価値を置かない」方向で守る設計。
+    #   read-only    : /api/admin/** への書き込み（POST/PUT/PATCH/DELETE）を 403
+    #   mask-contact : 管理画面の応答で連絡先メールを伏せ字にする（本人の照会は伏せない）
+    #   retention-days: 何日経った注文の連絡先を消すか。0 なら消さない。
+    #                  ⚠ 注文自体は消さない（消すと売上集計から過去が消える）
+    read-only: ${APP_DEMO_READ_ONLY:false}
+    mask-contact: ${APP_DEMO_MASK_CONTACT:false}
+    retention-days: ${APP_DEMO_RETENTION_DAYS:0}
+    retention-sweep-ms: ${APP_DEMO_RETENTION_SWEEP_MS:3600000}
+  auth:
+    # ログイン総当たり対策。メールアドレス単位で数える（IP は詐称できるため）。
+    # 成功すれば即リセットされる。
+    max-login-attempts: ${APP_MAX_LOGIN_ATTEMPTS:5}
+    login-window-seconds: ${APP_LOGIN_WINDOW_SECONDS:900}
+    login-lockout-seconds: ${APP_LOGIN_LOCKOUT_SECONDS:900}
   jwt:
     # Overridden by APP_JWT_SECRET in production. Must be >= 32 bytes for HS256.
     secret: ${APP_JWT_SECRET:change-me-in-production-please-32bytes-minimum-secret}

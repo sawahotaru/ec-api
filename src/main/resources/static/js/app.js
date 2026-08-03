@@ -347,6 +347,10 @@ function renderAdmin(settings, rates, products, coupons, stats) {
         <a href="#/" class="back-link">← 商品一覧へ戻る</a>
         <h1 class="admin-title">⚙️ ストア管理</h1>
 
+        ${settings.readOnly ? `
+        <p class="readonly-note">🔒 これは<strong>公開デモ</strong>のため、閲覧のみです。
+           保存・追加・削除は行われません（自分の環境で動かすと制限なく使えます）。</p>` : ""}
+
         ${statsCardHtml(stats)}
 
         <section class="admin-card">

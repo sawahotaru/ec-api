@@ -3,6 +3,7 @@ package com.example.ecapi.dto;
 import com.example.ecapi.domain.Order;
 import com.example.ecapi.domain.OrderItem;
 import com.example.ecapi.domain.OrderStatus;
+import com.example.ecapi.privacy.ContactMask;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Min;
@@ -85,6 +86,19 @@ public final class OrderDtos {
 
         public static OrderResponse from(Order order) {
             return build(order, false);
+        }
+
+        /**
+         * 連絡先を伏せ字にした複製。
+         *
+         * <p>使うのは<strong>管理画面の応答だけ</strong>。本人の注文照会（会員の
+         * {@code /api/orders/{id}}・ゲストの token 照合）では伏せない——自分の
+         * メールアドレスが読めないのは、保護ではなく不具合にしか見えない。
+         */
+        public OrderResponse masked() {
+            return new OrderResponse(id, ContactMask.mask(userEmail), guest, status,
+                    subtotalAmount, discountAmount, shippingAmount, taxAmount, totalAmount,
+                    couponCode, pricingMode, items, createdAt, orderToken);
         }
 
         /** Includes the one-time orderToken — use only in the immediate guest-checkout reply. */
