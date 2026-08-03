@@ -41,6 +41,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addInterceptor(demoReadOnly).addPathPatterns("/api/admin/**");
     }
 
+
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         registry.addResourceHandler("/" + ProductImageStorage.URL_PREFIX + "**")

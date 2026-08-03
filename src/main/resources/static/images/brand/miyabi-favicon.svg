@@ -1,0 +1,24 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">みやび favicon</title>
+  <desc id="desc">和雑貨 みやび用の正方形アイコンです。</desc>
+  <defs>
+    <linearGradient id="gold" x1="112" y1="100" x2="398" y2="412" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8B672D"/>
+      <stop offset="0.5" stop-color="#D0AE71"/>
+      <stop offset="1" stop-color="#8B672D"/>
+    </linearGradient>
+    <radialGradient id="bg" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(256 256) rotate(90) scale(256)">
+      <stop stop-color="#3A332C"/>
+      <stop offset="1" stop-color="#171411"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="152" stroke="url(#gold)" stroke-width="14"/>
+  <circle cx="256" cy="256" r="113" stroke="#D0AE71" stroke-width="5" opacity="0.42"/>
+  <path d="M190 212C217 174 291 174 324 210C295 263 221 268 190 212Z" fill="#F6F0E8"/>
+  <path d="M256 152V338" stroke="url(#gold)" stroke-width="11" stroke-linecap="round"/>
+  <path d="M178 254H334" stroke="url(#gold)" stroke-width="9" stroke-linecap="round"/>
+  <path d="M202 302H310" stroke="url(#gold)" stroke-width="7" stroke-linecap="round" opacity="0.9"/>
+  <path d="M142 364C182 338 221 324 256 323C295 322 340 337 382 366" stroke="url(#gold)" stroke-width="8" stroke-linecap="round" opacity="0.9"/>
+</svg>

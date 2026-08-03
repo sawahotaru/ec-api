@@ -45,6 +45,8 @@ services:
       APP_SHIPPING_FEE: ${APP_SHIPPING_FEE:-0}
       APP_SHIPPING_FREE_THRESHOLD: ${APP_SHIPPING_FREE_THRESHOLD:-0}
       APP_UPLOADS_DIR: ${APP_UPLOADS_DIR:-/app/uploads}
+      APP_STORE_NAME: ${APP_STORE_NAME:-和雑貨 みやび}
+      APP_STORE_LOGO_URL: ${APP_STORE_LOGO_URL:-images/brand/miyabi-logo-premium.svg}
 
       # 公開デモとして見せるときだけ有効にする（既定は無効）
       APP_DEMO_READ_ONLY: ${APP_DEMO_READ_ONLY:-false}

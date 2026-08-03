@@ -68,6 +68,23 @@ checkout → PENDING（在庫を hold）
 - **内税（INCLUSIVE）/ 外税（EXCLUSIVE）を管理画面から再デプロイ無しで切替**可能。切替は将来の注文にだけ効きます。
 - 端数処理は行ごとに切り捨て（既定。`APP_TAX_ROUNDING` で変更可）。
 
+### 店名とロゴ — 画像の店にも、文字の店にも
+
+ヘッダの看板は管理画面から**再デプロイ無しで**変えられます（`GET /api/store/branding` が公開情報として返します）。
+
+| 状態 | ヘッダの表示 |
+|---|---|
+| ロゴあり | ロゴ画像（`alt` は店名） |
+| **ロゴなし** | **店名の文字** |
+
+ロゴを設定していても**店名は捨てません**。画像が表示できない環境の代替文字、ページタイトル、通知メールの差出人名に要るためです。逆にロゴを外せば文字看板に戻せます——戻す手段が無いと、試しに上げた画像から二度と戻れなくなります。
+
+看板は `<a href="#/">` なので、**JS が落ちてもホームには戻れます**。全ページの左上に常に出るので、これ自体がサブページからの復帰導線になります。
+
+> ⚠️ **同梱の既定ロゴは SVG ですが、アップロードでは SVG を受け付けません。** 同梱物は jar の中身ですが、アップロードは利用者の入力を**自サイトのオリジンから配信**することになり、スクリプトを埋めた SVG が保存型 XSS になるためです。保存処理は商品画像と同じ `ProductImageStorage` を通しています（用途ごとに書き分けると、そのうちどれかが先頭バイトの判定や SVG の拒否を落としたまま増えます）。
+
+ファビコンは SVG＋PNG（32/192/512）を同梱し、`manifest.json` で「ホーム画面に追加」にも対応しています。⚠️ 拡張子を `.webmanifest` ではなく `.json` にしてあるのは、Spring の静的配信が前者を `application/octet-stream` で返し、このバージョンには型を指定する API が無いためです（`ContentNegotiationConfigurer` は効きません——実際に試して確認しました）。
+
 ### 二段階認証（TOTP）— ステートレスな JWT で正しくやる
 
 管理者ログインに認証アプリ（Google Authenticator 等）の6桁を追加できます（`app.mfa.*`・**既定は各ユーザーが無効**）。TOTP は RFC 6238 の**純Java実装**で、依存は増やしていません。
@@ -124,6 +141,8 @@ checkout → PENDING（在庫を hold）
 | 注文（会員） | `POST /api/orders/checkout`, `GET /api/orders`, `/{id}` | ユーザー（本人のみ） |
 | 注文（ゲスト） | `POST /api/orders/guest-checkout`, `GET /api/orders/guest/{id}?token=` | 公開（トークン照合） |
 | 税（公開） | `GET /api/tax/config`（内税/外税と現行税率） | 公開 |
+| 店の情報（公開） | `GET /api/store/branding`（店名・ロゴ） | 公開 |
+| 管理: 店名・ロゴ | `PUT /api/admin/branding/name`, `POST /api/admin/branding/logo`（multipart `file`）, `DELETE /api/admin/branding/logo` | ADMIN |
 | 見積もり（公開） | `POST /api/checkout/quote`（送料・クーポン込みの金額。在庫は動かない）, `GET /api/checkout/shipping` | 公開 |
 | 決済 | `GET /api/payments/config`, `POST /api/payments/orders/{id}/checkout-session?provider=`, `POST /api/payments/guest/orders/{id}/checkout-session`, `POST /api/payments/{providerId}/webhook`, `GET /api/payments/{providerId}/instructions` | 公開 / 本人 |
 | 管理: 商品 | `POST/PUT/DELETE /api/admin/products` | ADMIN |
@@ -334,6 +353,8 @@ Swagger UI なら右上の **Authorize** にトークンを貼れば全エンド
 | `APP_SHIPPING_FREE_THRESHOLD` | 送料無料になる金額の**初期値**（割引後の商品合計で判定）。0 なら無料にならない | 0 |
 | `APP_CONTEXT_PATH` | サブパス配信時のプレフィックス（本番は `/ec`） | （空＝ルート） |
 | `APP_STATS_ZONE` | 売上集計で「月」を切るタイムゾーン | Asia/Tokyo |
+| `APP_STORE_NAME` | 店名の**初期値**（以後は管理画面の設定が優先） | 和雑貨 みやび |
+| `APP_STORE_LOGO_URL` | ロゴの**初期値**。空にすると店名を文字で表示 | images/brand/miyabi-logo-premium.svg |
 | `APP_DEMO_READ_ONLY` | `/api/admin/**` への書き込みを 403 にする（公開デモ用） | false |
 | `APP_DEMO_MASK_CONTACT` | 管理画面の応答で連絡先メールを伏せ字にする | false |
 | `APP_DEMO_RETENTION_DAYS` | 何日経った注文の連絡先を消すか（注文自体は消さない）。0=消さない | 0 |

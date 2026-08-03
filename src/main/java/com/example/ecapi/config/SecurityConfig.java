@@ -42,6 +42,10 @@ public class SecurityConfig {
                                 // 金額の見積もりと送料設定。何も作らず何も明かさないので公開でよい
                                 // （買い手が注文前に送料・クーポンを確認できないと意味がない）。
                                 "/api/checkout/**",
+                                // ヘッダの看板。画面が最初に描くものなので認証を要求しない
+                                // （401 だと未ログインの買い手にはヘッダが空のまま見える）。
+                                "/api/store/**",
+                                "/manifest.json",
                                 "/api/orders/guest-checkout",
                                 "/api/orders/guest/**",
                                 "/api/payments/guest/**",

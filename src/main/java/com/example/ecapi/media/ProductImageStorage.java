@@ -88,12 +88,25 @@ public class ProductImageStorage {
     }
 
     /**
-     * Validates and stores the upload.
+     * Validates and stores a product image.
      *
      * @return the relative URL to store in {@code Product.imageUrl}
      * @throws BadRequestException if the bytes are not a supported image, or too large
      */
     public String store(MultipartFile file, Long productId) {
+        return store(file, "p" + productId);
+    }
+
+    /**
+     * Validates and stores an upload under a caller-chosen name prefix.
+     *
+     * <p>商品画像以外（店のロゴなど）もここを通す。<strong>検証を1本に保つため</strong>で、
+     * 用途ごとに保存処理を書くと、そのうちどれかが先頭バイトの判定や SVG の拒否を
+     * 落としたまま増える——しかも通常の操作では気づけない。
+     *
+     * @param prefix 生成するファイル名の先頭（呼び出し側が決める。利用者の入力は混ぜない）
+     */
+    public String store(MultipartFile file, String prefix) {
         if (file == null || file.isEmpty()) {
             throw new BadRequestException("画像ファイルが空です");
         }
@@ -106,12 +119,12 @@ public class ProductImageStorage {
                 .orElseThrow(() -> new BadRequestException(
                         "対応していない画像形式です（JPEG / PNG / WebP のみ）"));
 
-        String filename = "p" + productId + "-" + randomToken() + "." + type.extension();
+        String filename = prefix + "-" + randomToken() + "." + type.extension();
         Path target = directory.resolve(filename);
         try (InputStream in = file.getInputStream()) {
             Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
-            throw new IllegalStateException("Failed to store product image", e);
+            throw new IllegalStateException("Failed to store uploaded image", e);
         }
 
         // The multipart limit is the real guard, but a streamed request could in

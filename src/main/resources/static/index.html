@@ -5,11 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>和雑貨 みやび — EC Demo Shop</title>
     <link rel="stylesheet" href="css/styles.css">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏮</text></svg>">
+    <!-- ファビコン。パスはすべて相対にしてある（ルート "/" でも "/ec/" 配下でも同じ HTML で動く）。
+         SVG を先に置くのは、対応ブラウザではどの解像度でも滲まないため。
+         非対応の環境は下の PNG に落ちる。 -->
+    <link rel="icon" type="image/svg+xml" href="images/brand/miyabi-favicon.svg">
+    <link rel="icon" type="image/png" sizes="32x32" href="images/brand/favicon-32.png">
+    <link rel="apple-touch-icon" href="images/brand/miyabi-favicon-192.png">
+    <!-- 拡張子を .json にしてあるのは、.webmanifest だと Spring の静的配信が
+         application/octet-stream で返すため（型を指定する API がこのバージョンに無い）。
+         ブラウザは manifest を JSON 型でも受け付ける。 -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#4f46e5">
 </head>
 <body>
 <header class="topbar">
-    <div class="brand" id="brand">🏮 和雑貨 みやび</div>
+    <!-- サイト名／ロゴ。中身は起動時に /api/store/branding の内容で差し替わる。
+         href="#/" にしてあるので、JS が落ちてもホームには戻れる。 -->
+    <a class="brand" id="brand" href="#/" aria-label="ホームへ">和雑貨 みやび</a>
     <div class="search">
         <input id="search" type="search" placeholder="商品名で検索…" autocomplete="off">
         <select id="category"><option value="">全カテゴリ</option></select>

@@ -38,7 +38,10 @@ button { font: inherit; cursor: pointer; }
     backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--line);
 }
-.brand { font-weight: 800; font-size: 18px; white-space: nowrap; }
+/* サイト名／ロゴ。<a> なのでリンクの既定色と下線は打ち消す（見た目は元の見出しのまま） */
+.brand { font-weight: 800; font-size: 18px; white-space: nowrap;
+    display: inline-flex; align-items: center; text-decoration: none; color: inherit; }
+.brand:hover { opacity: .85; }
 .search { display: flex; gap: 8px; flex: 1; max-width: 620px; }
 .search input, .search select {
     padding: 9px 12px;
@@ -321,3 +324,10 @@ main { max-width: 1140px; margin: 0 auto; padding: 22px 20px 80px; }
 /* QRはサーバーが返す SVG をそのまま置く。幅は上限だけ決めて、SVG側の比率に任せる */
 .mfa-qr { margin: 8px 0; }
 .mfa-qr svg { display: block; width: 100%; max-width: 260px; height: auto; }
+
+/* Brand (header logo / store name) */
+/* ロゴは高さで揃える。幅は原稿の縦横比に任せる（横長ロゴでも潰さない） */
+.brand-logo { display: block; height: 34px; width: auto; max-width: 240px; }
+.brand-preview { margin: 8px 0; padding: 12px; background: #fff;
+    border: 1px solid var(--line); border-radius: 10px; display: inline-block; }
+.brand-preview img { display: block; height: 44px; width: auto; max-width: 320px; }

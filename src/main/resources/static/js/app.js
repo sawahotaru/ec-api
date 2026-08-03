@@ -49,6 +49,8 @@ const state = {
     taxRates: {},
     // 送料の公開設定 { fee, freeThreshold }。「あと○円で送料無料」の判定にだけ使う。
     shipping: { fee: 0, freeThreshold: 0 },
+    // ヘッダの看板 { name, logoUrl }。logoUrl が空なら店名を文字で出す。
+    branding: { name: "", logoUrl: "" },
     // カートに適用中のクーポンコード。サーバーが検証したものだけが入る。
     couponCode: null,
     // 直近の /api/checkout/quote の結果。表示も、注文ボタンの金額もこれが根拠。
@@ -68,6 +70,33 @@ async function loadTaxConfig() {
     state.taxMode = tax.pricingMode || "INCLUSIVE";
     state.taxRates = {};
     (tax.rates || []).forEach((r) => { state.taxRates[r.category] = Number(r.ratePercent); });
+}
+
+/* ---------- ヘッダの看板（店名／ロゴ） ----------
+   ロゴが設定されていれば画像、無ければ店名の文字列を出す。どちらの場合も
+   ホームへのリンクにする（サブページから1クリックで戻れる導線を、常に画面の左上に置く）。
+   ⚠ 画像URLは商品画像と同じ imageStyle と同様に BASE で解決する。素の相対パスだと
+     ハッシュルーティング配下や /ec/ で狙った先を指さない。 */
+async function loadBranding() {
+    const b = await api("/api/store/branding");
+    state.branding = { name: b.name || "", logoUrl: b.logoUrl || "" };
+    renderBrand();
+}
+
+function renderBrand() {
+    const el = $("#brand");
+    if (!el) return;
+    const { name, logoUrl } = state.branding;
+    if (logoUrl) {
+        const src = /^(https?:)?\/\//.test(logoUrl) || logoUrl.startsWith("/")
+            ? logoUrl : `${BASE}/${logoUrl}`;
+        // alt には店名を入れる。画像が出ない環境でも、何の店かは分かるようにする。
+        el.innerHTML = `<img class="brand-logo" src="${escapeHtml(src)}" alt="${escapeHtml(name)}">`;
+    } else {
+        el.textContent = name;
+    }
+    el.setAttribute("aria-label", name ? `${name} — ホームへ` : "ホームへ");
+    if (name) document.title = `${name} — EC Demo Shop`;
 }
 
 /* 送料の公開設定。「あと○円で送料無料」を出すためだけに要る（金額そのものは
@@ -249,18 +278,24 @@ function showGrid() {
     $("#emptyState").classList.toggle("hidden", $("#grid").children.length > 0);
 }
 
+/* サブページの先頭に必ず置く戻り導線。
+   ⚠ 「読み込み中」「エラー」「権限なし」の分岐にも**必ず**入れること。
+   ここが抜けると、通信が遅い／失敗した瞬間だけ戻れない画面になる。
+   正常系だけ見ていると気づけない種類の欠落なので、文字列を1箇所に集めてある。 */
+const BACK_LINK = '<a href="#/" class="back-link">← 商品一覧へ戻る</a>';
+
 async function showDetail(id) {
     hideViews();
     const box = $("#productDetail");
     box.classList.remove("hidden");
-    box.innerHTML = '<p class="empty">読み込み中…</p>';
+    box.innerHTML = BACK_LINK + '<p class="empty">読み込み中…</p>';
     try {
         const p = state.productsById[id] || await api(`/api/products/${id}`);
         state.productsById[id] = p;
         renderDetail(p);
         window.scrollTo({ top: 0 });
     } catch {
-        box.innerHTML = '<p class="empty">商品が見つかりません。 <a href="#/">一覧へ戻る</a></p>';
+        box.innerHTML = BACK_LINK + '<p class="empty">商品が見つかりません。</p>';
     }
 }
 
@@ -269,7 +304,7 @@ function renderDetail(p) {
     const out = avail <= 0;
     const img = imageStyle(p.imageUrl);
     $("#productDetail").innerHTML = `
-        <a href="#/" class="back-link">← 商品一覧へ戻る</a>
+        ${BACK_LINK}
         <div class="detail-grid">
             <div class="detail-thumb" style="${img}"></div>
             <div class="detail-info">
@@ -296,11 +331,10 @@ async function showAdmin() {
     const box = $("#adminPanel");
     box.classList.remove("hidden");
     if (!isAdmin()) {
-        box.innerHTML = `<a href="#/" class="back-link">← 商品一覧へ戻る</a>
-            <p class="empty">管理者としてログインしてください。</p>`;
+        box.innerHTML = BACK_LINK + '<p class="empty">管理者としてログインしてください。</p>';
         return;
     }
-    box.innerHTML = '<p class="empty">読み込み中…</p>';
+    box.innerHTML = BACK_LINK + '<p class="empty">読み込み中…</p>';
     try {
         const [settings, rates, products, coupons, stats] = await Promise.all([
             api("/api/admin/settings", { auth: true }),
@@ -314,8 +348,8 @@ async function showAdmin() {
         try { mfa = await api("/api/auth/mfa/status", { auth: true }); } catch { /* ignore */ }
         renderAdmin(settings, rates, products.content || [], coupons || [], stats, mfa);
     } catch (ex) {
-        box.innerHTML = `<a href="#/" class="back-link">← 商品一覧へ戻る</a>
-            <p class="empty">管理情報を取得できませんでした: ${escapeHtml(ex.message)}</p>`;
+        box.innerHTML = BACK_LINK
+            + `<p class="empty">管理情報を取得できませんでした: ${escapeHtml(ex.message)}</p>`;
     }
 }
 
@@ -349,7 +383,7 @@ function renderAdmin(settings, rates, products, coupons, stats, mfa) {
     }).join("");
 
     $("#adminPanel").innerHTML = `
-        <a href="#/" class="back-link">← 商品一覧へ戻る</a>
+        ${BACK_LINK}
         <h1 class="admin-title">⚙️ ストア管理</h1>
 
         ${settings.readOnly ? `
@@ -357,6 +391,8 @@ function renderAdmin(settings, rates, products, coupons, stats, mfa) {
            保存・追加・削除は行われません（自分の環境で動かすと制限なく使えます）。</p>` : ""}
 
         ${statsCardHtml(stats)}
+
+        ${brandingCardHtml()}
 
         ${mfaCardHtml(mfa, settings.readOnly)}
 
@@ -590,6 +626,94 @@ async function disableMfa() {
         await showAdmin();
         toast("二段階認証を解除しました");
     } catch (ex) { toast(ex.message); }
+}
+
+/* ---------- 店名とロゴ ----------
+   ロゴが無い店もあるので、画像と文字の両方を1つのカードで扱う。
+   「ロゴを外す」を用意しているのは、一度上げた画像を戻せないと文字看板に戻せないため。 */
+
+function brandingCardHtml() {
+    const { name, logoUrl } = state.branding;
+    const preview = logoUrl
+        ? `<div class="brand-preview"><img src="${escapeHtml(
+              /^(https?:)?\/\//.test(logoUrl) || logoUrl.startsWith("/") ? logoUrl : `${BASE}/${logoUrl}`
+          )}" alt="${escapeHtml(name)}"></div>`
+        : `<p class="hint">ロゴは未設定です。ヘッダには<strong>店名の文字</strong>が出ます。</p>`;
+    const source = !logoUrl ? "未設定"
+        : logoUrl.startsWith("images/uploads/") ? "アップロード画像"
+        : /^(https?:)?\/\//.test(logoUrl) ? "外部URL" : "同梱画像";
+
+    return `
+        <section class="admin-card">
+            <h2>店名とロゴ</h2>
+            <p class="hint">ヘッダの看板です。<strong>ロゴを設定すれば画像、未設定なら店名の文字</strong>が出ます。
+               どちらの場合もホームへのリンクになります。
+               <br>店名はロゴを設定していても使います（画像が表示できない環境の代替文字・ページタイトル）。</p>
+            <div class="rate-new-row">
+                <label class="inline-field"><span>店名</span>
+                    <input id="storeName" type="text" maxlength="60" value="${escapeHtml(name)}"></label>
+                <button class="btn" data-act="save-store-name">保存</button>
+            </div>
+            <h3>ロゴ（現在: ${source}）</h3>
+            ${preview}
+            <div class="img-actions">
+                <label class="btn ghost sm">
+                    ロゴを選ぶ
+                    <input type="file" accept="image/jpeg,image/png,image/webp" data-act="pick-logo" hidden>
+                </label>
+                ${logoUrl ? '<button class="link-danger" data-act="drop-logo">ロゴを外す</button>' : ""}
+            </div>
+            <p class="hint">JPEG / PNG / WebP・2MB まで。⚠️ <strong>SVG は受け付けません</strong>——
+               同梱の既定ロゴは SVG ですが、それは jar の中身です。アップロードされた SVG は
+               自サイトのオリジンから配信されるため、スクリプトを埋められると保存型XSSになります。</p>
+        </section>`;
+}
+
+async function saveStoreName() {
+    const name = $("#storeName").value.trim();
+    if (!name) { toast("店名を入力してください"); return; }
+    try {
+        const res = await api("/api/admin/branding/name", { method: "PUT", auth: true, body: { name } });
+        await afterBrandingChange(res, "店名を変更しました");
+    } catch (ex) { toast(ex.message); }
+}
+
+async function uploadLogo(file) {
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file);
+    try {
+        toast("アップロード中…");
+        // FormData を送るときは Content-Type を自前で付けない（boundary が壊れる）。
+        const r = await fetch(`${BASE}/api/admin/branding/logo`, {
+            method: "POST",
+            headers: state.token ? { Authorization: "Bearer " + state.token } : {},
+            body: form,
+        });
+        const text = await r.text();
+        const data = text ? JSON.parse(text) : null;
+        if (!r.ok) {
+            throw new Error((data && data.message)
+                || (r.status === 503 ? "サーバー側で画像の保存先を用意できていません" : `${r.status} ${r.statusText}`));
+        }
+        await afterBrandingChange(data, "ロゴを更新しました");
+    } catch (ex) { toast(ex.message); }
+}
+
+async function dropLogo() {
+    if (!window.confirm("ロゴを外しますか？（ヘッダには店名の文字が出ます）")) return;
+    try {
+        const res = await api("/api/admin/branding/logo", { method: "DELETE", auth: true });
+        await afterBrandingChange(res, "ロゴを外しました");
+    } catch (ex) { toast(ex.message); }
+}
+
+// 看板は全画面の左上に出ているので、保存したらその場で描き直す。
+async function afterBrandingChange(res, msg) {
+    state.branding = { name: res.name || "", logoUrl: res.logoUrl || "" };
+    renderBrand();
+    await showAdmin();
+    toast(msg);
 }
 
 /* ---------- shipping ---------- */
@@ -974,7 +1098,7 @@ function guestLookupShellHtml(id, token) {
         </section>`;
 
     return `
-        <a href="#/" class="back-link">← 商品一覧へ戻る</a>
+        ${BACK_LINK}
         <h1 class="admin-title">🔎 注文照会（ゲスト）</h1>
 
         <section class="admin-card">
@@ -1613,6 +1737,8 @@ function bind() {
             if (kind === "mode") { setPricingMode(act.dataset.mode); return; }
             if (kind === "add-rate") { addRate(); return; }
             if (kind === "save-shipping") { saveShipping(); return; }
+            if (kind === "save-store-name") { saveStoreName(); return; }
+            if (kind === "drop-logo") { dropLogo(); return; }
             if (kind === "mfa-setup") { startMfaSetup(); return; }
             if (kind === "mfa-confirm") { confirmMfa(); return; }
             if (kind === "mfa-disable") { disableMfa(); return; }
@@ -1658,11 +1784,12 @@ function bind() {
     // 商品画像の <input type="file">。click ではなく change で拾う必要があるので、
     // 上のクリック委譲とは別に張る（管理パネルは再描画されるため要素直付けはしない）。
     document.addEventListener("change", (e) => {
-        const picker = e.target.closest('[data-act="pick-image"]');
+        const picker = e.target.closest('[data-act="pick-image"], [data-act="pick-logo"]');
         if (!picker) return;
-        const row = picker.closest(".img-row");
         const file = picker.files && picker.files[0];
         picker.value = "";   // 同じファイルを選び直しても change が発火するようにする
+        if (picker.dataset.act === "pick-logo") { uploadLogo(file); return; }
+        const row = picker.closest(".img-row");
         if (row) uploadProductImage(row, file);
     });
 }
@@ -1682,6 +1809,9 @@ async function init() {
     try {
         await loadTaxConfig();
     } catch { /* keep defaults */ }
+    try {
+        await loadBranding();
+    } catch { /* HTML に書いてある既定の店名が残るだけ。買い物は止めない */ }
     try {
         await loadShippingConfig();
     } catch { /* 「あと○円で送料無料」が出ないだけ。金額は見積もりAPIが返す */ }
