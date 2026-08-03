@@ -53,6 +53,8 @@ const state = {
     couponCode: null,
     // 直近の /api/checkout/quote の結果。表示も、注文ボタンの金額もこれが根拠。
     quote: null,
+    // ログインの二段階目で使う引換券。これでは何のAPIも叩けない（サーバー側で用途を判定）。
+    mfaToken: null,
 };
 
 // Suffix shown after prices, e.g. 「（税込）」. Prices in the catalog are tax-included
@@ -307,14 +309,17 @@ async function showAdmin() {
             api("/api/admin/coupons", { auth: true }),
             api("/api/admin/stats?months=12", { auth: true }),
         ]);
-        renderAdmin(settings, rates, products.content || [], coupons || [], stats);
+        // 失敗しても管理画面は出す（MFAカードが出ないだけ）
+        let mfa = null;
+        try { mfa = await api("/api/auth/mfa/status", { auth: true }); } catch { /* ignore */ }
+        renderAdmin(settings, rates, products.content || [], coupons || [], stats, mfa);
     } catch (ex) {
         box.innerHTML = `<a href="#/" class="back-link">← 商品一覧へ戻る</a>
             <p class="empty">管理情報を取得できませんでした: ${escapeHtml(ex.message)}</p>`;
     }
 }
 
-function renderAdmin(settings, rates, products, coupons, stats) {
+function renderAdmin(settings, rates, products, coupons, stats, mfa) {
     const mode = settings.pricingMode;
     const today = new Date().toISOString().slice(0, 10);
     // Sort so the effective-date timeline reads top-down per category.
@@ -352,6 +357,8 @@ function renderAdmin(settings, rates, products, coupons, stats) {
            保存・追加・削除は行われません（自分の環境で動かすと制限なく使えます）。</p>` : ""}
 
         ${statsCardHtml(stats)}
+
+        ${mfaCardHtml(mfa, settings.readOnly)}
 
         <section class="admin-card">
             <h2>税の表示方式</h2>
@@ -488,6 +495,101 @@ function bar(label, value, max, valueText, note) {
             <span class="stat-bar"><span class="stat-fill" style="width:${pct}%"></span></span>
             <span class="stat-value">${valueText}${note ? `<small>${escapeHtml(note)}</small>` : ""}</span>
         </div>`;
+}
+
+/* ---------- 二段階認証（自分のアカウント） ----------
+   ⚠ QRコードは出さない。QRエンコーダ（Reed-Solomon の誤り訂正・マスク選択）を自作しても、
+   **実際にカメラで読めるかを自動で確かめる手段がここには無い**（デコーダが無い）。
+   検証できない自作コードを認証機能に載せるより、確実に動く2経路を用意する:
+     ① otpauth:// リンク — スマホなら押すだけで認証アプリが開く（QRを撮るより速い）
+     ② 鍵の手入力 — どの環境でも必ず登録できる
+   clinic-reservation は純PHPの qr_svg() を持っているので、そちらを移植する余地はある。 */
+
+function mfaCardHtml(mfa, readOnly) {
+    if (!mfa) return "";
+    const body = mfa.enabled
+        ? `<p class="hint">状態: <strong>有効 ✓</strong>（ログイン時に認証アプリの6桁が必要です）
+             ／ リカバリコード残り <strong>${mfa.remainingRecoveryCodes}</strong> 本</p>
+           <div class="rate-new-row">
+             <input id="mfaDisableCode" type="text" inputmode="numeric" placeholder="認証コード">
+             <button class="link-danger" data-act="mfa-disable">二段階認証を解除</button>
+           </div>
+           <p class="hint">解除にも認証コードが要ります（盗まれたセッションで黙って外されないように）。</p>`
+        : `<p class="hint">状態: <strong>無効</strong>。有効にすると、パスワードに加えて
+             認証アプリの6桁が必要になります。</p>
+           <button class="btn" data-act="mfa-setup">二段階認証を設定する</button>`;
+
+    return `
+        <section class="admin-card" id="mfaCard">
+            <h2>二段階認証</h2>
+            ${readOnly ? '<p class="hint">※ 公開デモでは設定を変更できません（下記参照）。</p>' : ""}
+            ${body}
+            <div id="mfaSetupArea"></div>
+        </section>`;
+}
+
+async function startMfaSetup() {
+    try {
+        const res = await api("/api/auth/mfa/setup", { method: "POST", auth: true });
+        $("#mfaSetupArea").innerHTML = `
+            <div class="mfa-setup">
+              <ol class="mfa-steps">
+                <li><strong>スマホで見ている場合</strong>は、このリンクを押すと認証アプリが開いて登録できます:
+                    <br><a class="mfa-link" href="${escapeHtml(res.otpauthUri)}">認証アプリに登録する</a></li>
+                <li><strong>パソコンで見ている場合</strong>は、認証アプリの「手動で入力」から
+                    この鍵を入れてください:
+                    <br><code class="mfa-secret">${escapeHtml(res.secret)}</code></li>
+                <li>アプリに出た6桁を入れて「確認して有効化」を押します。</li>
+              </ol>
+              <div class="rate-new-row">
+                <input id="mfaConfirmCode" type="text" inputmode="numeric" placeholder="123456">
+                <button class="btn" data-act="mfa-confirm">確認して有効化</button>
+              </div>
+              <p class="hint">⚠️ この鍵は<strong>毎回まったく新しいもの</strong>が作られます。
+                 認証アプリに前の登録が残っていると、同じ名前が2つ並んで古いほうの数字を
+                 入れてしまいます。新しく読み取ったら、アプリ側の古い登録は削除してください。</p>
+            </div>`;
+    } catch (ex) { toast(ex.message); }
+}
+
+async function confirmMfa() {
+    const code = $("#mfaConfirmCode").value.trim();
+    if (!code) { toast("認証コードを入力してください"); return; }
+    try {
+        const res = await api("/api/auth/mfa/confirm", { method: "POST", auth: true, body: { code } });
+        // リカバリコードはここでしか出ない（保存はハッシュ）。閉じる前に控えてもらう。
+        const list = (res.recoveryCodes || []).map((c) => `<li><code>${escapeHtml(c)}</code></li>`).join("");
+        $("#mfaSetupArea").innerHTML = `
+            <div class="mfa-recovery">
+              <h3>リカバリコード（この画面でしか表示されません）</h3>
+              <p class="hint">認証アプリが使えなくなったときの最後の入口です。
+                 <strong>印刷するか紙に控えて</strong>保管してください。1本につき1回だけ使えます。</p>
+              <ol class="mfa-codes">${list}</ol>
+              <button class="btn ghost" data-act="mfa-done">控えました</button>
+            </div>`;
+    } catch (ex) { toast(ex.message); }
+}
+
+async function disableMfa() {
+    const code = $("#mfaDisableCode").value.trim();
+    if (!code) { toast("認証コードを入力してください"); return; }
+    // 解除は取り消せない。もう一度有効にするときは鍵が作り直され、認証アプリへの登録と
+    // リカバリコードの控えをやり直すことになる（clinic 側で同じ注意書きを出している）。
+    const msg = [
+        "二段階認証を解除します。",
+        "",
+        "もう一度有効にするときは新しい鍵が作り直され、",
+        "認証アプリへの登録とリカバリコードの控えをやり直すことになります。",
+        "（そのときアプリの古い登録は削除してください）",
+        "",
+        "解除しますか？",
+    ].join("\n");
+    if (!window.confirm(msg)) return;
+    try {
+        await api("/api/auth/mfa", { method: "DELETE", auth: true, body: { code } });
+        await showAdmin();
+        toast("二段階認証を解除しました");
+    } catch (ex) { toast(ex.message); }
 }
 
 /* ---------- shipping ---------- */
@@ -987,17 +1089,62 @@ async function submitAuth(e) {
             ? { email, password, name: $("#f-name").value.trim() }
             : { email, password };
         const res = await api(`/api/auth/${mode}`, { method: "POST", body });
-        state.token = res.token;
-        state.user = res.user;
-        localStorage.setItem("ec_token", res.token);
-        closeAuth();
-        reflectAuth();
-        await mergeGuestCartIfAny();
-        await refreshCart();
-        toast(`ようこそ、${res.user.name} さん`);
+        // 二段階認証が有効なアカウント。サーバーはトークンを返しておらず、
+        // 引換券（mfaToken）だけが来ている。認証はまだ完了していない。
+        if (res.mfaRequired) { showMfaStep(res.mfaToken); return; }
+        await completeLogin(res);
     } catch (ex) {
         err.textContent = ex.message;
         err.classList.remove("hidden");
+    }
+}
+
+/** ログイン成立後の共通処理（一段階でも二段階でもここへ合流する）。 */
+async function completeLogin(res) {
+    state.token = res.token;
+    state.user = res.user;
+    localStorage.setItem("ec_token", res.token);
+    closeAuth();
+    reflectAuth();
+    await mergeGuestCartIfAny();
+    await refreshCart();
+    toast(`ようこそ、${res.user.name} さん`);
+}
+
+/* ---------- 二段階目 ---------- */
+
+function showMfaStep(mfaToken) {
+    state.mfaToken = mfaToken;
+    $("#authForm").classList.add("hidden");
+    $$(".tabs").forEach((t) => t.classList.add("hidden"));
+    $("#mfaStep").classList.remove("hidden");
+    $("#mfaError").classList.add("hidden");
+    $("#f-mfa-code").value = "";
+    $("#f-mfa-code").focus();
+}
+
+function hideMfaStep() {
+    state.mfaToken = null;
+    $("#mfaStep").classList.add("hidden");
+    $("#authForm").classList.remove("hidden");
+    $$(".tabs").forEach((t) => t.classList.remove("hidden"));
+}
+
+async function submitMfa(e) {
+    e.preventDefault();
+    const err = $("#mfaError");
+    err.classList.add("hidden");
+    try {
+        const res = await api("/api/auth/mfa", {
+            method: "POST",
+            body: { mfaToken: state.mfaToken, code: $("#f-mfa-code").value.trim() },
+        });
+        hideMfaStep();
+        await completeLogin(res);
+    } catch (ex) {
+        err.textContent = ex.message;
+        err.classList.remove("hidden");
+        $("#f-mfa-code").select();
     }
 }
 
@@ -1410,6 +1557,7 @@ function bind() {
     $("#authBtn").addEventListener("click", openAuth);
     $("#logoutBtn").addEventListener("click", logout);
     $("#authForm").addEventListener("submit", submitAuth);
+    $("#mfaStep").addEventListener("submit", submitMfa);
     $$(".tab").forEach((t) => t.addEventListener("click", () => setAuthTab(t.dataset.tab)));
 
     $("#cartBtn").addEventListener("click", async () => {
@@ -1465,6 +1613,10 @@ function bind() {
             if (kind === "mode") { setPricingMode(act.dataset.mode); return; }
             if (kind === "add-rate") { addRate(); return; }
             if (kind === "save-shipping") { saveShipping(); return; }
+            if (kind === "mfa-setup") { startMfaSetup(); return; }
+            if (kind === "mfa-confirm") { confirmMfa(); return; }
+            if (kind === "mfa-disable") { disableMfa(); return; }
+            if (kind === "mfa-done") { showAdmin(); return; }
             if (kind === "add-coupon") { addCoupon(); return; }
             if (kind === "open-guest-order") { openSavedGuestOrder(Number(act.dataset.id)); return; }
             if (kind === "forget-guest-order") {

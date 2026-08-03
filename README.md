@@ -68,6 +68,30 @@ checkout → PENDING（在庫を hold）
 - **内税（INCLUSIVE）/ 外税（EXCLUSIVE）を管理画面から再デプロイ無しで切替**可能。切替は将来の注文にだけ効きます。
 - 端数処理は行ごとに切り捨て（既定。`APP_TAX_ROUNDING` で変更可）。
 
+### 二段階認証（TOTP）— ステートレスな JWT で正しくやる
+
+管理者ログインに認証アプリ（Google Authenticator 等）の6桁を追加できます（`app.mfa.*`・**既定は各ユーザーが無効**）。TOTP は RFC 6238 の**純Java実装**で、依存は増やしていません。
+
+**この機能で唯一致命的な間違いは、パスワード認証の時点でアクセストークンを返してしまうこと**です。そうすると二段階目を飛ばしても API が叩けるので、認証アプリの登録は**ただの飾り**になります。しかも画面は正しく動いて見えるため、テスト以外に気付く手段がありません。
+
+セッションを持つアプリなら「まだ admin フラグを立てない」で済みますが、こちらはサーバーが状態を持ちません。そこで**トークン自体に用途を焼き込みます**。
+
+| 段 | 動き |
+|---|---|
+| `POST /api/auth/login` | MFA有効なら `{mfaRequired: true, mfaToken}` のみ。**アクセストークンもユーザー情報も返さない**（パスワードだけ持つ相手に氏名や権限を教える理由が無い） |
+| `mfaToken` | `purpose=mfa` クレーム付き・短命（既定5分）。**`JwtAuthenticationFilter` が通常APIで弾く** |
+| `POST /api/auth/mfa` | 6桁またはリカバリコードと引き換えに、初めて本物のトークンを発行 |
+
+その他の判断:
+
+- **登録は3段**（鍵を発行 → アプリに登録 → **コードを1回通して初めて有効化**）。鍵を作った時点で有効にすると、アプリへの登録に失敗した人がその場で締め出されます
+- **解除にもコードが要る**。盗まれたセッションで黙って外されると、入れた意味が無くなります
+- **リカバリコードはハッシュ保存・使い捨て**。平文で持つと、DBが読まれた時点で二段階目が素通りになります
+- **試行制限は一段目と共有**。6桁は総当たりの的なので、「パスワードが合っていれば無制限に試せる」状態を作りません
+- **QRコードは出しません。** QRエンコーダを自作しても*実際にカメラで読めるか*を自動で確かめる手段がないため、確実に動く2経路（スマホなら `otpauth://` リンクを押すだけ／PCなら鍵の手入力）にしています
+
+> 🔴 **公開デモでは登録・解除を拒否します。** 読み取り専用は `/api/admin/**` の書き込みを止めていますが、MFA登録は `/api/auth/**` なので**素通りしてしまいます**。管理者アカウントは閲覧者どうしで共有されているため、誰か一人が自分の認証アプリを登録すると**他の全員が二度と入れなくなります**（実質的なサービス妨害）。ログイン自体は塞ぎません。
+
 ### 公開デモは「隠す」のではなく「壊せない・盗る物が無い」状態にする
 
 管理画面は**塞いでいません**。税率の有効期間管理・送料・クーポン・売上集計は、そこにしか無い展示物だからです。かわりに、公開デモでは次の3つを有効にしています。**アプリ側の既定はすべて無効**で（配布物として持ち出した環境で、説明も無く管理機能が使えないのは機能欠陥にしか見えないため）、公開デモの環境変数でだけ有効になります。
@@ -90,7 +114,8 @@ checkout → PENDING（在庫を hold）
 
 | 領域 | エンドポイント | 権限 |
 |---|---|---|
-| 認証 | `POST /api/auth/register`, `/login`, `GET /api/auth/me` | 公開 / 本人 |
+| 認証 | `POST /api/auth/register`, `/login`, `POST /api/auth/mfa`（二段階目）, `GET /api/auth/me` | 公開 / 本人 |
+| 二段階認証の設定 | `GET /api/auth/mfa/status`, `POST /api/auth/mfa/setup`, `POST /api/auth/mfa/confirm`, `DELETE /api/auth/mfa` | 本人 |
 | 商品（閲覧） | `GET /api/products`（検索 `q`・`categoryId`・ページング・`sort`）, `GET /api/products/{id}` | 公開 |
 | カテゴリ（閲覧） | `GET /api/categories`, `/{id}` | 公開 |
 | カート（会員） | `GET /api/cart`, `POST /api/cart/items`, `PUT/DELETE /api/cart/items/{productId}`, `DELETE /api/cart` | ユーザー |
@@ -233,6 +258,7 @@ H2 インメモリで完結するので、DB もネットワークサービス�
 | `V1__baseline_schema.sql` | ベースライン。既存DBでは実行されず「適用済み」として記録される（`baseline-on-migrate`）。実際に走るのは空DB（テストのH2・新規環境）だけ |
 | `V2__drop_orders_stripe_session_id.sql` | 決済のプラグイン化で不要になった Stripe 固有列を撤去（捨てる前に `payment_reference` へ移行） |
 | `V3__fix_orders_status_check_and_guest_user_id.sql` | 実DBに残っていたエンティティとの不整合を是正（後述） |
+| `V5__users_mfa.sql` | 二段階認証（TOTP）の列。`mfa_enabled` を鍵と別に持つのは「鍵はあるが未確認」の状態を有効扱いしないため |
 | `V4__coupons_and_order_pricing_stages.sql` | 金額の段階（割引・送料）の列と `coupons` テーブル。追加列は `NOT NULL DEFAULT 0`＝**既存注文でも恒等式が成り立つ**（0 は「不明」ではなく正しい値） |
 
 - SQL は **H2 と PostgreSQL の両方で動く書き方**に限定しています。テストは H2 で走るので、マイグレーションが壊れれば CI が赤くなる＝本番に出る前に気づけます。
@@ -310,6 +336,8 @@ Swagger UI なら右上の **Authorize** にトークンを貼れば全エンド
 | `APP_DEMO_MASK_CONTACT` | 管理画面の応答で連絡先メールを伏せ字にする | false |
 | `APP_DEMO_RETENTION_DAYS` | 何日経った注文の連絡先を消すか（注文自体は消さない）。0=消さない | 0 |
 | `APP_MAX_LOGIN_ATTEMPTS` / `APP_LOGIN_WINDOW_SECONDS` / `APP_LOGIN_LOCKOUT_SECONDS` | ログイン試行制限 | 5 / 900 / 900 |
+| `APP_JWT_MFA_EXPIRATION_MS` | 二段階目の引換券の有効期限 | 300000（5分） |
+| `APP_MFA_ISSUER` | 認証アプリに表示される発行者名 | EC API |
 | `APP_UPLOADS_DIR` | 商品画像の保存先（**jar の外・永続ボリューム推奨**） | `./data/uploads` |
 | `APP_UPLOADS_MAX_SIZE` / `APP_UPLOADS_MAX_BYTES` | 1ファイルの上限（前者は multipart 側・後者はアプリ側。**揃えること**） | 2MB / 2097152 |
 | `PUBLIC_BASE_URL` | 通知メールに載せる絶対リンクの基点（context-path 込み。例 `https://lab.4510.be/ec`） | （空＝直リンクの代わりに注文番号＋トークンを本文に記載） |

@@ -304,3 +304,17 @@ main { max-width: 1140px; margin: 0 auto; padding: 22px 20px 80px; }
 /* Read-only demo notice (admin) */
 .readonly-note { background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412;
     border-radius: 10px; padding: 12px 14px; margin: 0 0 16px; font-size: 14px; line-height: 1.7; }
+
+/* Two-factor authentication */
+.mfa-title { margin: 0 0 8px; font-size: 16px; }
+.mfa-setup, .mfa-recovery { margin-top: 12px; padding: 12px 14px; background: #f8fafc;
+    border: 1px solid var(--line); border-radius: 10px; }
+.mfa-steps { margin: 0 0 10px; padding-left: 1.3em; line-height: 1.9; font-size: 14px; }
+/* 鍵は手で書き写す。折り返しても読めるよう字間を空け、選択しやすくしておく */
+.mfa-secret { display: inline-block; margin-top: 4px; padding: 6px 10px; background: #fff;
+    border: 1px solid var(--line); border-radius: 8px; font-size: 15px; letter-spacing: .12em;
+    user-select: all; word-break: break-all; }
+.mfa-link { display: inline-block; margin-top: 4px; font-weight: 600; }
+.mfa-codes { columns: 2; margin: 8px 0 12px; padding-left: 1.4em; line-height: 2; }
+.mfa-codes code { font-size: 15px; letter-spacing: .06em; user-select: all; }
+#f-mfa-code { letter-spacing: .3em; font-size: 18px; text-align: center; }

@@ -106,6 +106,19 @@
             <button type="submit" class="btn wide" id="authSubmit">ログイン</button>
             <p class="hint">デモ: <code>user@example.com</code> / <code>user1234</code></p>
         </form>
+        <!-- 二段階目。パスワードが通っただけでは、まだトークンを受け取っていない -->
+        <form id="mfaStep" class="hidden">
+            <h3 class="mfa-title">🔐 二段階認証</h3>
+            <p class="hint">認証アプリに表示されている6桁の数字を入力してください。</p>
+            <label class="field">
+                <span>認証コード</span>
+                <input id="f-mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code"
+                       placeholder="123456" required>
+            </label>
+            <p id="mfaError" class="error hidden"></p>
+            <button type="submit" class="btn wide">確認</button>
+            <p class="hint">端末を失くした場合は、控えておいた<strong>リカバリコード</strong>を入力してください。</p>
+        </form>
         <button class="btn ghost close-x" data-close="auth">✕</button>
     </div>
 </div>

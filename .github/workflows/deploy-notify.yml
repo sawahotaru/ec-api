@@ -53,6 +53,16 @@ jobs:
           fi
           echo "No key-shaped strings found."
 
+      # フロントは依存ゼロのバニラJSで**ビルド段が無い**。つまり構文エラーがあっても
+      # 誰も気づかないまま本番に出て、画面が真っ白になる（実際に踏んだ）。
+      # Java 側の mvn test では検出できないので、ここで見る。
+      - name: Lint front-end JavaScript
+        run: |
+          for f in src/main/resources/static/js/*.js; do
+            node --check "$f" || { echo "::error file=$f::JavaScript syntax error"; exit 1; }
+          done
+          echo "All front-end JS parsed cleanly."
+
       - name: Set up JDK 21
         uses: actions/setup-java@v5
         with:

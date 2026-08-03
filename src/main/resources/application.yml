@@ -74,11 +74,17 @@ app:
     # Overridden by APP_JWT_SECRET in production. Must be >= 32 bytes for HS256.
     secret: ${APP_JWT_SECRET:change-me-in-production-please-32bytes-minimum-secret}
     expiration-ms: ${APP_JWT_EXPIRATION_MS:86400000}
+    # 二段階目の引換券の寿命。短いのは、パスワードだけが漏れた状態で
+    # 長く持ち歩けるものを渡さないため。これでは何のAPIも叩けない（purpose=mfa）。
+    mfa-expiration-ms: ${APP_JWT_MFA_EXPIRATION_MS:300000}
   seed:
     # Seed demo data (categories, products, admin + demo user) on startup.
     enabled: ${APP_SEED_ENABLED:true}
     admin-email: ${APP_ADMIN_EMAIL:admin@example.com}
     admin-password: ${APP_ADMIN_PASSWORD:admin1234}
+  mfa:
+    # 認証アプリに表示される発行者名（otpauth URI の issuer）。
+    issuer: ${APP_MFA_ISSUER:EC API}
   order:
     # A checkout reserves (holds) stock. If unpaid within this window, a background
     # sweep expires the order and releases the hold back to sellable stock.
