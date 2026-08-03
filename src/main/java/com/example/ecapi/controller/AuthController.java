@@ -13,6 +13,7 @@ import com.example.ecapi.exception.ForbiddenException;
 import com.example.ecapi.privacy.DemoProperties;
 import com.example.ecapi.security.CurrentUserProvider;
 import com.example.ecapi.security.mfa.MfaService;
+import com.example.ecapi.security.mfa.QrCode;
 import com.example.ecapi.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -83,7 +84,7 @@ public class AuthController {
                 user.isMfaEnabled(),
                 user.getMfaSecret() != null && !user.isMfaEnabled(),
                 mfaService.remainingRecoveryCodes(user),
-                null, null, null);
+                null, null, null, null);
     }
 
     @Operation(summary = "二段階認証の設定を開始（鍵を発行。まだ有効にはならない）",
@@ -93,7 +94,8 @@ public class AuthController {
         User user = currentUserProvider.require();
         guardDemo();
         MfaService.Enrollment enrollment = mfaService.startEnrollment(user);
-        return new MfaStatusResponse(false, true, 0, enrollment.secret(), enrollment.otpauthUri(), null);
+        return new MfaStatusResponse(false, true, 0, enrollment.secret(), enrollment.otpauthUri(),
+                QrCode.svg(enrollment.otpauthUri(), 5, 4, "二段階認証のセットアップ用QRコード"), null);
     }
 
     @Operation(summary = "二段階認証を有効化（コードを1回通して確認）",
@@ -103,7 +105,7 @@ public class AuthController {
         User user = currentUserProvider.require();
         guardDemo();
         List<String> recoveryCodes = mfaService.confirmEnrollment(user, request.code());
-        return new MfaStatusResponse(true, false, recoveryCodes.size(), null, null, recoveryCodes);
+        return new MfaStatusResponse(true, false, recoveryCodes.size(), null, null, null, recoveryCodes);
     }
 
     @Operation(summary = "二段階認証を解除",
@@ -114,7 +116,7 @@ public class AuthController {
         User user = currentUserProvider.require();
         guardDemo();
         mfaService.disable(user, request.code());
-        return new MfaStatusResponse(false, false, 0, null, null, null);
+        return new MfaStatusResponse(false, false, 0, null, null, null, null);
     }
 
     /**

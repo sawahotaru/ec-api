@@ -498,12 +498,10 @@ function bar(label, value, max, valueText, note) {
 }
 
 /* ---------- 二段階認証（自分のアカウント） ----------
-   ⚠ QRコードは出さない。QRエンコーダ（Reed-Solomon の誤り訂正・マスク選択）を自作しても、
-   **実際にカメラで読めるかを自動で確かめる手段がここには無い**（デコーダが無い）。
-   検証できない自作コードを認証機能に載せるより、確実に動く2経路を用意する:
-     ① otpauth:// リンク — スマホなら押すだけで認証アプリが開く（QRを撮るより速い）
-     ② 鍵の手入力 — どの環境でも必ず登録できる
-   clinic-reservation は純PHPの qr_svg() を持っているので、そちらを移植する余地はある。 */
+   QRはサーバーが SVG で返す（`QrCode.svg`）。**鍵を外部のQR生成サービスへ送らない**ため。
+   自作エンコーダの正しさは、実機で読めている clinic-reservation の実装と
+   出力を1モジュールずつ突き合わせて担保している（QrCodeTest 参照）。
+   読み取れない環境のために、otpauth:// リンクと鍵の手入力も併記する。 */
 
 function mfaCardHtml(mfa, readOnly) {
     if (!mfa) return "";
@@ -534,11 +532,13 @@ async function startMfaSetup() {
         $("#mfaSetupArea").innerHTML = `
             <div class="mfa-setup">
               <ol class="mfa-steps">
-                <li><strong>スマホで見ている場合</strong>は、このリンクを押すと認証アプリが開いて登録できます:
-                    <br><a class="mfa-link" href="${escapeHtml(res.otpauthUri)}">認証アプリに登録する</a></li>
-                <li><strong>パソコンで見ている場合</strong>は、認証アプリの「手動で入力」から
-                    この鍵を入れてください:
-                    <br><code class="mfa-secret">${escapeHtml(res.secret)}</code></li>
+                <li>認証アプリ（Google Authenticator など）で「アカウントを追加」→
+                    「QRコードをスキャン」を選び、下のQRを読み取ります。
+                    <div class="mfa-qr">${res.qrSvg || ""}</div></li>
+                <li>読み取れないときは、認証アプリの「手動で入力」からこの鍵を入れてください:
+                    <br><code class="mfa-secret">${escapeHtml(res.secret)}</code>
+                    <br><span class="hint">スマホでこの画面を見ているなら、
+                    <a class="mfa-link" href="${escapeHtml(res.otpauthUri)}">このリンク</a>を押すだけでも登録できます。</span></li>
                 <li>アプリに出た6桁を入れて「確認して有効化」を押します。</li>
               </ol>
               <div class="rate-new-row">

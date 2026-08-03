@@ -318,3 +318,6 @@ main { max-width: 1140px; margin: 0 auto; padding: 22px 20px 80px; }
 .mfa-codes { columns: 2; margin: 8px 0 12px; padding-left: 1.4em; line-height: 2; }
 .mfa-codes code { font-size: 15px; letter-spacing: .06em; user-select: all; }
 #f-mfa-code { letter-spacing: .3em; font-size: 18px; text-align: center; }
+/* QRはサーバーが返す SVG をそのまま置く。幅は上限だけ決めて、SVG側の比率に任せる */
+.mfa-qr { margin: 8px 0; }
+.mfa-qr svg { display: block; width: 100%; max-width: 260px; height: auto; }

@@ -78,6 +78,9 @@ public final class AuthDtos {
             int remainingRecoveryCodes,
             String secret,
             String otpauthUri,
+            // 認証アプリに読ませるQR（SVG文字列）。**サーバーで描く**のは、鍵を外部の
+            // QR生成サービスへ送らないため——「これをQRにして」と投げるのは鍵を渡すのと同じ。
+            String qrSvg,
             java.util.List<String> recoveryCodes) {
     }
 }
