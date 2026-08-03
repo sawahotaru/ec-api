@@ -8,10 +8,11 @@ ECサイトに必要な主要機能を一通り備えた、コンパクトな実
 
 ## 技術構成
 
-- Java 21 / Spring Boot 3.3
-- Spring Web / Spring Data JPA / Spring Security（JWT: jjwt）/ Bean Validation
+- **Spring Boot 4.1** / Java 21 をターゲット（ビルドは JDK 26・実行は JRE 25。`Dockerfile` 参照）
+- Spring Web / Spring Data JPA / Spring Security（JWT: jjwt 0.13）/ Bean Validation
 - PostgreSQL（本番・docker-compose）/ H2 インメモリ（デフォルト・ゼロ設定起動）
-- springdoc-openapi（Swagger UI）/ Stripe Java SDK（テストモード）
+- **Flyway** でスキーマ管理（Hibernate は `ddl-auto=validate`）
+- springdoc-openapi 3（Swagger UI・OAS 3.1）/ Stripe Java SDK（テストモード）
 - フロントは **依存ゼロのバニラ JS**（`src/main/resources/static/`・ビルド不要）
 - Docker マルチステージビルド。本番は Oracle Cloud の VM 上で Docker Compose（Caddy がリバースプロキシ）
 
