@@ -25,10 +25,33 @@ on:
 
 jobs:
   test:
-    name: mvn test
+    name: mvn test + secret scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      # 公開リポジトリなので、秘密情報がコミットされていないことを毎回確かめる。
+      # .gitignore は「うっかり add」を防ぐだけで、**一度追跡されたファイルには効かない**。
+      # clinic-reservation 側には以前から入っていた検査で、ec-api にだけ無かった。
+      - name: Ensure no secret files are tracked
+        run: |
+          hits=$(git ls-files | grep -iE '(^|/)\.env$|\.pem$|\.key$|\.p12$|\.jks$|id_rsa|id_ed25519|\.htpasswd' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::Secret-looking files are tracked in git:"; echo "$hits"; exit 1
+          fi
+          echo "No secret files tracked."
+
+      # 鍵の「形」を持つ文字列が本文に混じっていないか。
+      # 末尾に {20,} を付けているのは、README や application.yml に出てくる
+      # プレースホルダ（`sk_test_...` / `whsec_...`）を誤検知しないため
+      # ——検知しすぎて無視されるようになった検査は、無いのと同じになる。
+      - name: Ensure no live-looking keys are committed
+        run: |
+          hits=$(git grep -InE '(sk_live_|sk_test_|rk_live_|whsec_)[A-Za-z0-9]{20,}' -- . || true)
+          if [ -n "$hits" ]; then
+            echo "::error::Something shaped like a real API key is committed:"; echo "$hits"; exit 1
+          fi
+          echo "No key-shaped strings found."
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
