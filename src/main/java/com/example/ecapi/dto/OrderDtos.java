@@ -26,7 +26,13 @@ public final class OrderDtos {
     /** Guest checkout payload — no account, items passed inline (no server-side cart). */
     public record GuestCheckoutRequest(
             @NotNull @Email String email,
-            @NotEmpty @Valid List<GuestCheckoutLine> items) {
+            @NotEmpty @Valid List<GuestCheckoutLine> items,
+            // 任意。空・未指定なら割引なし。
+            String couponCode) {
+    }
+
+    /** Logged-in checkout payload. The cart is server-side; only the coupon comes in. */
+    public record CheckoutRequest(String couponCode) {
     }
 
     public record OrderItemResponse(
@@ -36,6 +42,8 @@ public final class OrderDtos {
             BigDecimal unitPrice,
             int quantity,
             BigDecimal lineTotal,
+            // この行が負担したクーポン割引（lineTotal と同じ流儀）。税は lineTotal − これ に対して計算済み。
+            BigDecimal discountAmount,
             // tax snapshot (fixed at purchase time)
             String taxCategory,
             BigDecimal taxRatePercent,
@@ -49,6 +57,7 @@ public final class OrderDtos {
                     item.getUnitPrice(),
                     item.getQuantity(),
                     item.getLineTotal(),
+                    item.getDiscountAmount(),
                     item.getTaxCategory().name(),
                     item.getTaxRatePercent(),
                     item.getTaxAmount());
@@ -60,9 +69,13 @@ public final class OrderDtos {
             String userEmail,
             boolean guest,
             String status,
+            // 段階: 小計（割引前・税抜） − 割引 ＋ 送料 ＋ 税 = 合計
             BigDecimal subtotalAmount,
+            BigDecimal discountAmount,
+            BigDecimal shippingAmount,
             BigDecimal taxAmount,
             BigDecimal totalAmount,
+            String couponCode,
             String pricingMode,
             List<OrderItemResponse> items,
             Instant createdAt,
@@ -90,8 +103,11 @@ public final class OrderDtos {
                     isGuest,
                     order.getStatus().name(),
                     order.getSubtotalAmount(),
+                    order.getDiscountAmount(),
+                    order.getShippingAmount(),
                     order.getTaxAmount(),
                     order.getTotalAmount(),
+                    order.getCouponCode(),
                     order.getPricingMode().name(),
                     items,
                     order.getCreatedAt(),

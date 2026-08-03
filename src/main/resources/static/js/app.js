@@ -45,8 +45,14 @@ const state = {
     guestMode: "choice",
     // Tax display: pricing mode (INCLUSIVE=内税/EXCLUSIVE=外税) from /api/tax/config.
     taxMode: "INCLUSIVE",
-    // { STANDARD: 10, REDUCED: 8 } — currently-effective rates, for the cart estimate.
+    // { STANDARD: 10, REDUCED: 8 } — currently-effective rates (商品カードの表示用)。
     taxRates: {},
+    // 送料の公開設定 { fee, freeThreshold }。「あと○円で送料無料」の判定にだけ使う。
+    shipping: { fee: 0, freeThreshold: 0 },
+    // カートに適用中のクーポンコード。サーバーが検証したものだけが入る。
+    couponCode: null,
+    // 直近の /api/checkout/quote の結果。表示も、注文ボタンの金額もこれが根拠。
+    quote: null,
 };
 
 // Suffix shown after prices, e.g. 「（税込）」. Prices in the catalog are tax-included
@@ -62,26 +68,11 @@ async function loadTaxConfig() {
     (tax.rates || []).forEach((r) => { state.taxRates[r.category] = Number(r.ratePercent); });
 }
 
-/* ---------- cart-side tax estimate ----------
-   Mirrors TaxService: per-line, truncated to whole yen (app.tax.rounding=FLOOR).
-   INCLUSIVE → tax = floor(line * rate / (100 + rate))   (line is tax-included)
-   EXCLUSIVE → tax = floor(line * rate / 100)            (line is tax-exclusive)
-   This is an ESTIMATE for display only — the authoritative figures are snapshotted
-   onto the order at checkout, so a rate change mid-session can't desync history. */
-function lineTax(lineAmount, ratePercent, mode) {
-    if (!ratePercent) return 0;
-    const divisor = mode === "EXCLUSIVE" ? 100 : 100 + ratePercent;
-    return Math.floor((lineAmount * ratePercent) / divisor);
-}
-
-function estimateCartTax(items) {
-    let tax = 0;
-    for (const it of items) {
-        const cat = (it.product && it.product.taxCategory) || "STANDARD";
-        const rate = state.taxRates[cat];
-        tax += lineTax(Number(it.lineTotal || 0), rate, state.taxMode);
-    }
-    return tax;
+/* 送料の公開設定。「あと○円で送料無料」を出すためだけに要る（金額そのものは
+   見積もりAPIが返すので、ここで計算はしない）。 */
+async function loadShippingConfig() {
+    const cfg = await api("/api/checkout/shipping");
+    state.shipping = { fee: Number(cfg.fee || 0), freeThreshold: Number(cfg.freeThreshold || 0) };
 }
 
 async function api(path, { method = "GET", body, auth = false } = {}) {
@@ -309,19 +300,20 @@ async function showAdmin() {
     }
     box.innerHTML = '<p class="empty">読み込み中…</p>';
     try {
-        const [settings, rates, products] = await Promise.all([
+        const [settings, rates, products, coupons] = await Promise.all([
             api("/api/admin/settings", { auth: true }),
             api("/api/admin/tax-rates", { auth: true }),
             api("/api/products?size=100&sort=id"),
+            api("/api/admin/coupons", { auth: true }),
         ]);
-        renderAdmin(settings, rates, products.content || []);
+        renderAdmin(settings, rates, products.content || [], coupons || []);
     } catch (ex) {
         box.innerHTML = `<a href="#/" class="back-link">← 商品一覧へ戻る</a>
             <p class="empty">管理情報を取得できませんでした: ${escapeHtml(ex.message)}</p>`;
     }
 }
 
-function renderAdmin(settings, rates, products) {
+function renderAdmin(settings, rates, products, coupons) {
     const mode = settings.pricingMode;
     const today = new Date().toISOString().slice(0, 10);
     // Sort so the effective-date timeline reads top-down per category.
@@ -390,7 +382,178 @@ function renderAdmin(settings, rates, products) {
             </div>
         </section>
 
+        ${shippingCardHtml(settings)}
+
+        ${couponsCardHtml(coupons || [], today)}
+
         ${productImagesCardHtml(products || [])}`;
+}
+
+/* ---------- shipping ---------- */
+
+function shippingCardHtml(settings) {
+    const fee = Number(settings.shippingFee || 0);
+    const threshold = Number(settings.shippingFreeThreshold || 0);
+    return `
+        <section class="admin-card">
+            <h2>送料</h2>
+            <p class="hint">金額は<strong>商品価格と同じ流儀</strong>で入れます（現在は
+               ${settings.pricingMode === "EXCLUSIVE" ? "外税＝税抜" : "内税＝税込"}）。送料には<strong>標準税率</strong>がかかります。
+               <br>「送料無料になる金額」は<strong>割引後</strong>の商品合計で判定します。0 にすると送料無料にはなりません。
+               送料そのものを 0 にすれば送料を取りません。</p>
+            <div class="rate-new-row">
+                <label class="inline-field"><span>送料</span>
+                    <input id="shipFee" type="number" min="0" step="1" value="${fee}"></label>
+                <label class="inline-field"><span>送料無料になる金額</span>
+                    <input id="shipFree" type="number" min="0" step="1" value="${threshold}"></label>
+                <button class="btn" data-act="save-shipping">保存</button>
+            </div>
+            <p class="hint">現在: 送料 <strong>${fee > 0 ? yen(fee) : "なし"}</strong>
+               ／ ${threshold > 0 ? yen(threshold) + " 以上で無料" : "送料無料の設定なし"}</p>
+        </section>`;
+}
+
+async function saveShipping() {
+    const fee = $("#shipFee").value.trim();
+    const freeThreshold = $("#shipFree").value.trim();
+    if (fee === "" || freeThreshold === "") { toast("送料としきい値を入力してください"); return; }
+    try {
+        await api("/api/admin/settings/shipping", {
+            method: "PUT", auth: true, body: { fee: Number(fee), freeThreshold: Number(freeThreshold) },
+        });
+        await loadShippingConfig();
+        await refreshCart();      // 表示中のカートの金額もその場で合わせる
+        await showAdmin();
+        toast("送料を更新しました");
+    } catch (ex) { toast(ex.message); }
+}
+
+/* ---------- coupons ---------- */
+
+const DISCOUNT_LABEL = { PERCENT: "率（%）", FIXED: "定額（円）", FREE_SHIPPING: "送料無料" };
+
+function couponsCardHtml(coupons, today) {
+    const rows = coupons.map((c) => {
+        const used = c.maxRedemptions ? `${c.redeemedCount} / ${c.maxRedemptions}` : `${c.redeemedCount}`;
+        return `
+        <tr data-coupon="${c.id}" class="${c.activeToday ? "rate-active" : ""}">
+            <td><input data-f="code" type="text" value="${escapeHtml(c.code)}" size="12"></td>
+            <td>
+                <select data-f="discountType">
+                    ${Object.keys(DISCOUNT_LABEL).map((k) =>
+                        `<option value="${k}" ${c.discountType === k ? "selected" : ""}>${DISCOUNT_LABEL[k]}</option>`).join("")}
+                </select>
+            </td>
+            <td><input data-f="value" type="number" step="1" min="0" value="${c.value}"></td>
+            <td><input data-f="minSubtotal" type="number" step="1" min="0" value="${c.minSubtotal ?? ""}"></td>
+            <td><input data-f="validFrom" type="date" value="${c.validFrom || ""}"></td>
+            <td><input data-f="validTo" type="date" value="${c.validTo || ""}"></td>
+            <td><input data-f="maxRedemptions" type="number" step="1" min="0" value="${c.maxRedemptions ?? ""}"></td>
+            <td class="rate-state">${used}</td>
+            <td><input data-f="enabled" type="checkbox" ${c.enabled ? "checked" : ""}></td>
+            <td class="rate-actions">
+                <button class="btn ghost sm" data-act="save-coupon">保存</button>
+                <button class="link-danger" data-act="del-coupon">削除</button>
+            </td>
+        </tr>`;
+    }).join("");
+
+    return `
+        <section class="admin-card">
+            <h2>クーポン</h2>
+            <p class="hint">「率」は商品合計に対する割合、「定額」は商品価格と同じ流儀の金額です。
+               <strong>割引は税額にも反映されます</strong>（割引後の金額に課税）。
+               <br>終了日は<strong>その日を含みません</strong>（税率と同じ流儀）。「利用」は使われた回数／上限（空欄＝無制限）。
+               <br>過去の注文にはコードと割引額が焼き付いているので、<strong>削除しても過去の金額は変わりません</strong>。</p>
+            <div class="table-wrap">
+                <table class="admin-table">
+                    <thead><tr><th>コード</th><th>種類</th><th>値</th><th>最低金額</th><th>開始日</th>
+                        <th>終了日</th><th>上限</th><th>利用</th><th>有効</th><th></th></tr></thead>
+                    <tbody>${rows || '<tr><td colspan="10" class="empty">クーポンがありません。</td></tr>'}</tbody>
+                </table>
+            </div>
+            <div class="rate-new">
+                <h3>クーポンを追加</h3>
+                <div class="rate-new-row">
+                    <input id="newCouponCode" type="text" placeholder="コード（例 WELCOME500）" size="18">
+                    <select id="newCouponType">
+                        ${Object.keys(DISCOUNT_LABEL).map((k) =>
+                            `<option value="${k}">${DISCOUNT_LABEL[k]}</option>`).join("")}
+                    </select>
+                    <input id="newCouponValue" type="number" step="1" min="0" placeholder="値">
+                    <input id="newCouponMin" type="number" step="1" min="0" placeholder="最低金額（任意）">
+                    <input id="newCouponFrom" type="date" value="${today}">
+                    <input id="newCouponTo" type="date" placeholder="終了日（任意）">
+                    <input id="newCouponMax" type="number" step="1" min="0" placeholder="上限（任意）">
+                    <button class="btn" data-act="add-coupon">追加</button>
+                </div>
+            </div>
+        </section>`;
+}
+
+function readCouponRow(tr) {
+    const el = (f) => tr.querySelector(`[data-f="${f}"]`);
+    const num = (f) => (el(f).value.trim() === "" ? null : Number(el(f).value));
+    return {
+        code: el("code").value.trim(),
+        discountType: el("discountType").value,
+        // 送料無料は値を使わないので、空欄でも 0 として通す。
+        value: el("value").value.trim() === "" ? 0 : Number(el("value").value),
+        minSubtotal: num("minSubtotal"),
+        validFrom: el("validFrom").value || null,
+        validTo: el("validTo").value || null,
+        maxRedemptions: num("maxRedemptions"),
+        enabled: el("enabled").checked,
+    };
+}
+
+async function saveCoupon(tr) {
+    const body = readCouponRow(tr);
+    if (!body.code) { toast("コードを入力してください"); return; }
+    try {
+        await api(`/api/admin/coupons/${tr.dataset.coupon}`, { method: "PUT", auth: true, body });
+        await afterCouponChange("クーポンを更新しました");
+    } catch (ex) { toast(ex.message); }
+}
+
+async function deleteCoupon(tr) {
+    if (!window.confirm("このクーポンを削除しますか？（過去の注文の金額は変わりません）")) return;
+    try {
+        await api(`/api/admin/coupons/${tr.dataset.coupon}`, { method: "DELETE", auth: true });
+        await afterCouponChange("クーポンを削除しました");
+    } catch (ex) { toast(ex.message); }
+}
+
+async function addCoupon() {
+    const code = $("#newCouponCode").value.trim();
+    if (!code) { toast("コードを入力してください"); return; }
+    const raw = $("#newCouponValue").value.trim();
+    const type = $("#newCouponType").value;
+    if (type !== "FREE_SHIPPING" && raw === "") { toast("割引の値を入力してください"); return; }
+    const optional = (id) => ($(id).value.trim() === "" ? null : Number($(id).value));
+    try {
+        await api("/api/admin/coupons", {
+            method: "POST", auth: true,
+            body: {
+                code,
+                discountType: type,
+                value: raw === "" ? 0 : Number(raw),
+                minSubtotal: optional("#newCouponMin"),
+                validFrom: $("#newCouponFrom").value || null,
+                validTo: $("#newCouponTo").value || null,
+                maxRedemptions: optional("#newCouponMax"),
+                enabled: true,
+            },
+        });
+        await afterCouponChange("クーポンを追加しました");
+    } catch (ex) { toast(ex.message); }
+}
+
+// カートに適用中のコードが無効化されたかもしれないので、カートも引き直す。
+async function afterCouponChange(msg) {
+    await refreshCart();
+    await showAdmin();
+    toast(msg);
 }
 
 /* ---------- product images ----------
@@ -873,7 +1036,8 @@ function renderCart(cart) {
             </div>`;
         }).join("");
     }
-    renderCartTax(cart, items);
+    // 金額はサーバーに聞く。描画をブロックしないよう待たない（届いたら差し替わる）。
+    renderCartTotals(items);
 
     // Checkout UI has three shapes:
     //   member                     → the normal 「注文を確定する」 button
@@ -895,44 +1059,111 @@ function renderCart(cart) {
     $("#checkoutBtn").textContent = guest ? "この内容で注文する" : "注文を確定する";
 }
 
-/* Cart footer figures. The catalog price means different things per mode, so the
-   breakdown is derived rather than assumed:
-     INCLUSIVE → totalAmount is tax-included; 小計 = 合計 − 消費税
-     EXCLUSIVE → totalAmount is tax-exclusive; 合計 = 小計 + 消費税
-   Both are estimates until checkout snapshots them onto the order. */
-function renderCartTax(cart, items) {
+/* Cart footer figures.
+   These used to be estimated here in the browser, which meant the cart could disagree
+   with the invoice — and once 送料 and クーポン entered the picture the estimate would
+   have had to reimplement the discount allocation to stay honest. Instead the server
+   quotes the cart with the SAME code that will charge for it (/api/checkout/quote), so
+   there is exactly one implementation of the arithmetic and nothing to keep in sync. */
+async function renderCartTotals(items) {
     const box = $("#cartTax");
-    const sum = Number((cart && cart.totalAmount) || 0);
-    const exclusive = state.taxMode === "EXCLUSIVE";
+    const note = $("#cartTaxNote");
 
     if (items.length === 0) {
+        state.quote = null;
         box.classList.add("hidden");
         box.innerHTML = "";
-        $("#cartTaxNote").classList.add("hidden");
+        note.classList.add("hidden");
+        $("#couponRow").classList.add("hidden");
+        $("#couponState").classList.add("hidden");
         $("#cartTotalLabel").textContent = "合計";
         $("#cartTotal").textContent = yen(0);
         return;
     }
+    $("#couponRow").classList.remove("hidden");
 
-    const tax = estimateCartTax(items);
-    const subtotal = exclusive ? sum : sum - tax;
-    const total = exclusive ? sum + tax : sum;
+    const lines = items.map((it) => ({ productId: it.product.id, quantity: it.quantity }));
+    let quote;
+    try {
+        quote = await api("/api/checkout/quote", {
+            method: "POST",
+            body: { items: lines, couponCode: state.couponCode || null },
+        });
+        setCouponState(state.couponCode ? `クーポン ${state.couponCode} を適用中` : "", false);
+    } catch (ex) {
+        // ほぼ「クーポンが使えない」。クーポンを外した金額は出し続ける
+        // （金額が消えるより、理由が出て素の金額が見えるほうがよい）。
+        if (state.couponCode) {
+            setCouponState(ex.message, true);
+            state.couponCode = null;
+            try {
+                quote = await api("/api/checkout/quote", { method: "POST", body: { items: lines } });
+            } catch { quote = null; }
+        } else {
+            setCouponState(ex.message, true);
+            quote = null;
+        }
+    }
+    state.quote = quote;
 
-    box.innerHTML = `
-        <div><span>小計（税抜）</span><span>${yen(subtotal)}</span></div>
-        <div><span>消費税${exclusive ? "（概算）" : ""}</span><span>${yen(tax)}</span></div>`;
+    if (!quote) {
+        box.classList.add("hidden");
+        note.classList.add("hidden");
+        $("#cartTotal").textContent = yen(0);
+        return;
+    }
+
+    const rows = [`<div><span>小計（税抜）</span><span>${yen(quote.itemSubtotal)}</span></div>`];
+    if (Number(quote.discount) > 0) {
+        rows.push(`<div class="disc"><span>割引${quote.couponCode ? "（" + escapeHtml(quote.couponCode) + "）" : ""}</span>`
+            + `<span>−${yen(quote.discount)}</span></div>`);
+    }
+    rows.push(`<div><span>送料</span><span>${quote.freeShipping ? "無料" : yen(quote.shipping)}</span></div>`);
+    rows.push(`<div><span>消費税</span><span>${yen(quote.tax)}</span></div>`);
+    box.innerHTML = rows.join("");
     box.classList.remove("hidden");
 
-    $("#cartTotalLabel").textContent = exclusive ? "合計（税込・概算）" : "合計（税込）";
-    $("#cartTotal").textContent = yen(total);
-    // Only 外税 needs the caveat: the shown total is derived here, not by the server yet.
-    $("#cartTaxNote").classList.toggle("hidden", !exclusive);
+    $("#cartTotalLabel").textContent = "合計（税込）";
+    $("#cartTotal").textContent = yen(quote.total);
+
+    // 「あと○円で送料無料」。届いていない時だけ出す（届いた後に出しても意味がない）。
+    const remaining = shippingGapToFree(quote);
+    note.textContent = remaining > 0 ? `あと ${yen(remaining)} で送料無料になります。` : "";
+    note.classList.toggle("hidden", remaining <= 0);
+}
+
+/** 送料無料まであといくらか。しきい値未設定・到達済みなら 0。 */
+function shippingGapToFree(quote) {
+    const threshold = Number(state.shipping.freeThreshold || 0);
+    if (threshold <= 0 || quote.freeShipping) return 0;
+    // しきい値は「割引後の商品合計」に対する判定なので、同じ基準で残りを出す。
+    const itemsAfterDiscount = Number(quote.total) - Number(quote.shipping) - Number(quote.shippingTax);
+    return Math.max(0, threshold - itemsAfterDiscount);
+}
+
+function setCouponState(message, isError) {
+    const el = $("#couponState");
+    el.textContent = message || "";
+    el.classList.toggle("err", !!isError);
+    el.classList.toggle("hidden", !message);
+}
+
+async function applyCoupon() {
+    const code = $("#couponInput").value.trim();
+    state.couponCode = code || null;
+    await refreshCart();
+    if (state.couponCode && state.quote && state.quote.couponCode) {
+        $("#couponInput").value = "";
+    }
 }
 
 async function checkout() {
     if (!isLoggedIn()) { return guestCheckout(); }
     try {
-        const order = await api("/api/orders/checkout", { method: "POST", auth: true });
+        const order = await api("/api/orders/checkout", {
+            method: "POST", auth: true, body: { couponCode: state.couponCode || null },
+        });
+        state.couponCode = null;   // 使い切り。次のカートに持ち越さない
         state.lastOrder = order;
         await refreshCart();
         closeDrawers();
@@ -946,7 +1177,10 @@ async function guestCheckout() {
     const items = guestCart().map((i) => ({ productId: i.productId, quantity: i.quantity }));
     if (items.length === 0) { toast("カートが空です"); return; }
     try {
-        const order = await api("/api/orders/guest-checkout", { method: "POST", body: { email, items } });
+        const order = await api("/api/orders/guest-checkout", {
+            method: "POST", body: { email, items, couponCode: state.couponCode || null },
+        });
+        state.couponCode = null;
         saveGuestCart([]);
         state.guestMode = "choice"; // next guest visit starts from the method choice again
         rememberGuestOrder(order);
@@ -989,14 +1223,22 @@ function renderOrders(orders) {
     }).join("");
 }
 
+/* 注文のスナップショットをそのまま並べる: 小計 − 割引 + 送料 + 税 = 合計。
+   割引・送料の行は 0 のときは出さない（無いものを「¥0」と書いても情報が増えない）。
+   過去の注文にはそもそも列が無く 0 で入っているので、同じ扱いで正しく出る。 */
 function taxBreakdownHtml(order) {
-    // subtotal(税抜) + 消費税 + 合計(税込). Fields come from the order snapshot.
     if (order.subtotalAmount == null || order.taxAmount == null) return "";
-    return `<div class="tax-breakdown">
-        <div><span>小計（税抜）</span><span>${yen(order.subtotalAmount)}</span></div>
-        <div><span>消費税</span><span>${yen(order.taxAmount)}</span></div>
-        <div class="tb-total"><span>合計（税込）</span><span>${yen(order.totalAmount)}</span></div>
-    </div>`;
+    const rows = [`<div><span>小計（税抜）</span><span>${yen(order.subtotalAmount)}</span></div>`];
+    if (Number(order.discountAmount) > 0) {
+        rows.push(`<div class="disc"><span>割引${order.couponCode ? "（" + escapeHtml(order.couponCode) + "）" : ""}</span>`
+            + `<span>−${yen(order.discountAmount)}</span></div>`);
+    }
+    if (Number(order.shippingAmount) > 0) {
+        rows.push(`<div><span>送料（税抜）</span><span>${yen(order.shippingAmount)}</span></div>`);
+    }
+    rows.push(`<div><span>消費税</span><span>${yen(order.taxAmount)}</span></div>`);
+    rows.push(`<div class="tb-total"><span>合計（税込）</span><span>${yen(order.totalAmount)}</span></div>`);
+    return `<div class="tax-breakdown">${rows.join("")}</div>`;
 }
 
 function showOrderResult(order) {
@@ -1077,6 +1319,11 @@ function bind() {
     $("#guestOrdersBtn").addEventListener("click", () => { closeDrawers(); location.hash = "#/orders/guest"; });
     $("#adminBtn").addEventListener("click", () => { location.hash = "#/admin"; });
     $("#checkoutBtn").addEventListener("click", checkout);
+    $("#couponApplyBtn").addEventListener("click", applyCoupon);
+    $("#couponInput").addEventListener("keydown", (e) => {
+        // Enter で適用できないと、入力欄の隣にボタンがあっても押し忘れる。
+        if (e.key === "Enter") { e.preventDefault(); applyCoupon(); }
+    });
 
     // Guest checkout method choice
     $("#chooseMemberBtn").addEventListener("click", openAuth);       // login → cart merges → member checkout
@@ -1116,6 +1363,8 @@ function bind() {
             const kind = act.dataset.act;
             if (kind === "mode") { setPricingMode(act.dataset.mode); return; }
             if (kind === "add-rate") { addRate(); return; }
+            if (kind === "save-shipping") { saveShipping(); return; }
+            if (kind === "add-coupon") { addCoupon(); return; }
             if (kind === "open-guest-order") { openSavedGuestOrder(Number(act.dataset.id)); return; }
             if (kind === "forget-guest-order") {
                 forgetGuestOrder(Number(act.dataset.id));
@@ -1133,6 +1382,9 @@ function bind() {
             }
             const imgRow = act.closest(".img-row");
             if (imgRow && kind === "drop-image") { dropProductImage(imgRow); return; }
+            const couponRow = act.closest("tr[data-coupon]");
+            if (couponRow && kind === "save-coupon") { saveCoupon(couponRow); return; }
+            if (couponRow && kind === "del-coupon") { deleteCoupon(couponRow); return; }
             const tr = act.closest("tr[data-rate]");
             if (tr && kind === "save-rate") { saveRate(tr); return; }
             if (tr && kind === "del-rate") { deleteRate(tr); return; }
@@ -1177,6 +1429,9 @@ async function init() {
     try {
         await loadTaxConfig();
     } catch { /* keep defaults */ }
+    try {
+        await loadShippingConfig();
+    } catch { /* 「あと○円で送料無料」が出ないだけ。金額は見積もりAPIが返す */ }
     await Promise.all([loadCategories(), loadProducts()]);
     await restoreSession();
     if (!isLoggedIn()) updateCartCount(guestCartView()); // show guest cart badge on load

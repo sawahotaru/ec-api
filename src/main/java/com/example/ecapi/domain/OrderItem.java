@@ -12,6 +12,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
+import org.hibernate.annotations.ColumnDefault;
 
 /**
  * A line in an order. Product name and unit price are snapshotted at purchase
@@ -51,9 +52,21 @@ public class OrderItem {
     @Column(nullable = false, precision = 5, scale = 2)
     private BigDecimal taxRatePercent = BigDecimal.ZERO;
 
-    /** Consumption tax for this line (whole yen). */
+    /** Consumption tax for this line (whole yen), computed <em>after</em> the discount below. */
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal taxAmount = BigDecimal.ZERO;
+
+    /**
+     * This line's share of the order's coupon discount, in the same convention as
+     * {@link #getLineTotal()}.
+     *
+     * <p>Stored per line, not just per order, because the tax was computed on
+     * {@code lineTotal − discountAmount}. Without it the line breakdown does not
+     * reconcile: the tax would look wrong for the amount shown next to it.
+     */
+    @Column(nullable = false, precision = 12, scale = 2)
+    @ColumnDefault("0")
+    private BigDecimal discountAmount = BigDecimal.ZERO;
 
     /**
      * Line total the customer is charged. In INCLUSIVE mode {@code unitPrice} is
@@ -136,5 +149,13 @@ public class OrderItem {
 
     public void setTaxAmount(BigDecimal taxAmount) {
         this.taxAmount = taxAmount;
+    }
+
+    public BigDecimal getDiscountAmount() {
+        return discountAmount;
+    }
+
+    public void setDiscountAmount(BigDecimal discountAmount) {
+        this.discountAmount = discountAmount;
     }
 }

@@ -39,6 +39,9 @@ public class SecurityConfig {
                                 "/images/**",
                                 "/assets/**",
                                 "/api/auth/**",
+                                // 金額の見積もりと送料設定。何も作らず何も明かさないので公開でよい
+                                // （買い手が注文前に送料・クーポンを確認できないと意味がない）。
+                                "/api/checkout/**",
                                 "/api/orders/guest-checkout",
                                 "/api/orders/guest/**",
                                 "/api/payments/guest/**",

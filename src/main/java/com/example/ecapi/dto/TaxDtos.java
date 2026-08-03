@@ -49,6 +49,15 @@ public final class TaxDtos {
     public record PricingModeRequest(@NotNull PricingMode pricingMode) {
     }
 
-    public record SettingsResponse(String pricingMode) {
+    public record SettingsResponse(
+            String pricingMode,
+            BigDecimal shippingFee,
+            BigDecimal shippingFreeThreshold) {
+    }
+
+    /** Admin: 送料と「送料無料になる金額」。0 を渡せば「送料なし」「無料設定なし」。 */
+    public record ShippingSettingsRequest(
+            @NotNull @DecimalMin(value = "0.0", inclusive = true) BigDecimal fee,
+            @NotNull @DecimalMin(value = "0.0", inclusive = true) BigDecimal freeThreshold) {
     }
 }

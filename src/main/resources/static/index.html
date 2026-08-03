@@ -45,10 +45,16 @@
     </div>
     <div id="cartItems" class="drawer-body"></div>
     <div class="drawer-foot">
-        <!-- 税内訳（外税時は概算。確定額は注文時のスナップショット） -->
+        <!-- クーポン。サーバーの見積もりAPIで検証するので、ここで通れば注文でも通る -->
+        <div id="couponRow" class="coupon-row hidden">
+            <input id="couponInput" type="text" placeholder="クーポンコード" autocomplete="off" spellcheck="false">
+            <button id="couponApplyBtn" class="btn ghost sm" type="button">適用</button>
+        </div>
+        <p id="couponState" class="coupon-state hidden"></p>
+        <!-- 金額内訳（小計 / 割引 / 送料 / 消費税）。サーバーの見積もりをそのまま出す -->
         <div id="cartTax" class="tax-breakdown hidden"></div>
         <div class="total-row"><span id="cartTotalLabel">合計</span><strong id="cartTotal">¥0</strong></div>
-        <p id="cartTaxNote" class="hint hidden" style="margin:0 0 8px">※消費税は注文確定時の税率で確定します（上記は概算）。</p>
+        <p id="cartTaxNote" class="hint hidden" style="margin:0 0 8px"></p>
         <!-- 未ログイン時: 会員購入 / ゲスト購入 を選択（購入方法の分岐） -->
         <div id="guestChoice" class="guest-choice hidden">
             <p class="hint">購入方法を選択してください</p>

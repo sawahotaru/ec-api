@@ -29,6 +29,29 @@ checkout → PENDING（在庫を hold）
 
 期限切れの掃除は `OrderExpiryScheduler` が定期実行します。**Stripe キー未設定でもアプリは正常に動き**、注文は PENDING のまま作られて期限で自動解放されます。
 
+### 金額は段階で組み立てる（商品 → 割引 → 送料 → 税 → 合計）
+
+計算は `pricing/OrderPricer` に独立していて、**在庫を1つも動かさずに金額だけ出せます**。同じ計算器を
+注文（`POST /api/orders/checkout`）と見積もり（`POST /api/checkout/quote`）の両方が通るので、
+**カートに出た金額がそのまま請求額**になります（店頭側に「概算」の再実装がありません）。
+
+注文には次の5つがスナップショットされ、常に恒等式が成り立ちます:
+
+```
+合計 = 小計（税抜・割引前） − 割引 + 送料（税抜） + 消費税
+```
+
+| 論点 | どうしているか |
+|---|---|
+| **割引と税の順序** | 割引は**税額に反映されます**（割引後の金額に課税）。総額から最後に引くと、客が払っていない分にまで課税されるため |
+| **税率の違う行への割引** | 金額比で**按分**し、端数は最大の行に寄せる。行ごとの割引の合計は注文の割引額と**1円もずれません** |
+| **定額クーポンの読み方** | 商品価格と同じ流儀（内税なら税込から、外税なら税抜から）。「500円引き」は値札の隣の数字から500円 |
+| **送料の税率** | **標準税率**。軽減税率は飲食料品等に対するもので運賃には及びません |
+| **送料無料の判定** | **割引後**の商品合計で判定。割引前だと「3,000円引きを使ったのに送料無料のまま」になります |
+| **クーポンの引き換え数** | 在庫の引当と同じ条件付き UPDATE。上限の最後の1枚を2人が同時に取ることはありません。**キャンセル・期限切れでは戻ります**（売上にならなかったため） |
+
+送料（`PUT /api/admin/settings/shipping`）とクーポン（`/api/admin/coupons`）は管理画面から**再デプロイ無しで**変更できます。
+
 ### 消費税は「有効期間つき税率 × 注文時スナップショット」
 
 - 税率は `tax_rates` テーブルで**有効期間つき**に管理（標準10% / 軽減8%。将来日付の予約改定も可）。
@@ -51,13 +74,15 @@ checkout → PENDING（在庫を hold）
 | 注文（会員） | `POST /api/orders/checkout`, `GET /api/orders`, `/{id}` | ユーザー（本人のみ） |
 | 注文（ゲスト） | `POST /api/orders/guest-checkout`, `GET /api/orders/guest/{id}?token=` | 公開（トークン照合） |
 | 税（公開） | `GET /api/tax/config`（内税/外税と現行税率） | 公開 |
+| 見積もり（公開） | `POST /api/checkout/quote`（送料・クーポン込みの金額。在庫は動かない）, `GET /api/checkout/shipping` | 公開 |
 | 決済 | `GET /api/payments/config`, `POST /api/payments/orders/{id}/checkout-session?provider=`, `POST /api/payments/guest/orders/{id}/checkout-session`, `POST /api/payments/{providerId}/webhook`, `GET /api/payments/{providerId}/instructions` | 公開 / 本人 |
 | 管理: 商品 | `POST/PUT/DELETE /api/admin/products` | ADMIN |
 | 管理: 商品画像 | `POST /api/admin/products/{id}/image`（multipart `file`）, `DELETE /api/admin/products/{id}/image` | ADMIN |
 | 管理: カテゴリ | `POST/PUT/DELETE /api/admin/categories` | ADMIN |
 | 管理: 注文 | `GET /api/admin/orders`, `/{id}`, `PATCH /api/admin/orders/{id}/status` | ADMIN |
 | 管理: 税率 | `GET/POST/PUT/DELETE /api/admin/tax-rates` | ADMIN |
-| 管理: 設定 | `GET /api/admin/settings`, `PUT /api/admin/settings/pricing-mode` | ADMIN |
+| 管理: 設定 | `GET /api/admin/settings`, `PUT /api/admin/settings/pricing-mode`, `PUT /api/admin/settings/shipping` | ADMIN |
+| 管理: クーポン | `GET/POST/PUT/DELETE /api/admin/coupons` | ADMIN |
 
 注文明細には購入時点の**商品名・単価・税区分・税率・税額**をスナップショット保存します。
 
@@ -73,7 +98,7 @@ checkout → PENDING（在庫を hold）
 | `#/orders/guest` | **ゲスト注文の照会**。注文番号＋トークンで確認する。未ログイン時だけヘッダに「🔎 注文照会」が出る |
 | `#/orders/guest/{id}/{token}` | 上記の deep link。1件の注文をブックマークできる |
 
-管理パネルからは **内税/外税トグル**・**税率テーブルの追加・改定・削除**・**商品画像の差し替え**ができます（「適用中」バッジはサーバーの実効税率判定と同じロジック＝終了日は排他的）。カートには税内訳（小計 / 消費税 / 合計）が出ます。
+管理パネルからは **内税/外税トグル**・**税率テーブルの追加・改定・削除**・**送料の設定**・**クーポンの管理**・**商品画像の差し替え**ができます（「適用中」バッジはサーバーの実効税率判定と同じロジック＝終了日は排他的）。カートにはクーポン入力欄と金額内訳（小計 / 割引 / 送料 / 消費税 / 合計）が出ます。この数字は**サーバーの見積もりAPIがそのまま返したもの**です。
 
 ### 商品画像のアップロード
 
@@ -150,6 +175,7 @@ H2 インメモリで完結するので、DB もネットワークサービス�
 | `V1__baseline_schema.sql` | ベースライン。既存DBでは実行されず「適用済み」として記録される（`baseline-on-migrate`）。実際に走るのは空DB（テストのH2・新規環境）だけ |
 | `V2__drop_orders_stripe_session_id.sql` | 決済のプラグイン化で不要になった Stripe 固有列を撤去（捨てる前に `payment_reference` へ移行） |
 | `V3__fix_orders_status_check_and_guest_user_id.sql` | 実DBに残っていたエンティティとの不整合を是正（後述） |
+| `V4__coupons_and_order_pricing_stages.sql` | 金額の段階（割引・送料）の列と `coupons` テーブル。追加列は `NOT NULL DEFAULT 0`＝**既存注文でも恒等式が成り立つ**（0 は「不明」ではなく正しい値） |
 
 - SQL は **H2 と PostgreSQL の両方で動く書き方**に限定しています。テストは H2 で走るので、マイグレーションが壊れれば CI が赤くなる＝本番に出る前に気づけます。
 - CHECK 制約には明示的な名前（`ck_orders_status` など）を付けます。自動生成名だと後から `ALTER` で直せません。
@@ -218,6 +244,8 @@ Swagger UI なら右上の **Authorize** にトークンを貼れば全エンド
 | `APP_ORDER_EXPIRY_SWEEP_MS` | 期限切れ掃除の実行間隔 | 60000 |
 | `APP_TAX_PRICING_MODE` | `INCLUSIVE`（内税）/ `EXCLUSIVE`（外税）の**初期値**（以後は管理画面の設定が優先） | INCLUSIVE |
 | `APP_TAX_ROUNDING` | 端数処理 `FLOOR` / `HALF_UP` / `CEILING` | FLOOR |
+| `APP_SHIPPING_FEE` | 送料の**初期値**（以後は管理画面の設定が優先）。0 なら送料なし | 0 |
+| `APP_SHIPPING_FREE_THRESHOLD` | 送料無料になる金額の**初期値**（割引後の商品合計で判定）。0 なら無料にならない | 0 |
 | `APP_CONTEXT_PATH` | サブパス配信時のプレフィックス（本番は `/ec`） | （空＝ルート） |
 | `APP_UPLOADS_DIR` | 商品画像の保存先（**jar の外・永続ボリューム推奨**） | `./data/uploads` |
 | `APP_UPLOADS_MAX_SIZE` / `APP_UPLOADS_MAX_BYTES` | 1ファイルの上限（前者は multipart 側・後者はアプリ側。**揃えること**） | 2MB / 2097152 |

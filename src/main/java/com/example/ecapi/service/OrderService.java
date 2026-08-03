@@ -1,12 +1,11 @@
 package com.example.ecapi.service;
 
 import com.example.ecapi.domain.CartItem;
+import com.example.ecapi.domain.Coupon;
 import com.example.ecapi.domain.Order;
 import com.example.ecapi.domain.OrderItem;
 import com.example.ecapi.domain.OrderStatus;
-import com.example.ecapi.domain.PricingMode;
 import com.example.ecapi.domain.Product;
-import com.example.ecapi.domain.TaxCategory;
 import com.example.ecapi.domain.User;
 import com.example.ecapi.event.OrderCancelledEvent;
 import com.example.ecapi.event.OrderExpiredEvent;
@@ -14,11 +13,15 @@ import com.example.ecapi.event.OrderPaidEvent;
 import com.example.ecapi.event.OrderPlacedEvent;
 import com.example.ecapi.exception.BadRequestException;
 import com.example.ecapi.exception.NotFoundException;
+import com.example.ecapi.pricing.OrderPricer;
+import com.example.ecapi.pricing.OrderPricing;
+import com.example.ecapi.pricing.PricedLine;
 import com.example.ecapi.repository.CartItemRepository;
 import com.example.ecapi.repository.OrderRepository;
 import com.example.ecapi.repository.ProductRepository;
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -40,17 +43,23 @@ public class OrderService {
     private final CartItemRepository cartItemRepository;
     private final ProductRepository productRepository;
     private final TaxService taxService;
+    private final CouponService couponService;
+    private final OrderPricer orderPricer;
     private final ApplicationEventPublisher events;
 
     public OrderService(OrderRepository orderRepository,
                         CartItemRepository cartItemRepository,
                         ProductRepository productRepository,
                         TaxService taxService,
+                        CouponService couponService,
+                        OrderPricer orderPricer,
                         ApplicationEventPublisher events) {
         this.orderRepository = orderRepository;
         this.cartItemRepository = cartItemRepository;
         this.productRepository = productRepository;
         this.taxService = taxService;
+        this.couponService = couponService;
+        this.orderPricer = orderPricer;
         this.events = events;
     }
 
@@ -60,8 +69,14 @@ public class OrderService {
      * stock decrement only when payment is confirmed (see {@link PaymentService}); it is
      * released if the order is cancelled or expires unpaid.
      */
+    /** クーポン無しのチェックアウト。 */
     @Transactional
     public Order checkout(User user) {
+        return checkout(user, null);
+    }
+
+    @Transactional
+    public Order checkout(User user, String couponCode) {
         List<CartItem> cartItems = cartItemRepository.findByUserId(user.getId());
         if (cartItems.isEmpty()) {
             throw new BadRequestException("Cart is empty");
@@ -77,7 +92,7 @@ public class OrderService {
         Order order = new Order();
         order.setUser(user);
         order.setStatus(OrderStatus.PENDING);
-        buildAndReserve(order, quantities);
+        buildAndReserve(order, quantities, couponCode);
 
         Order saved = orderRepository.save(order);
         cartItemRepository.deleteByUserId(user.getId());
@@ -94,8 +109,14 @@ public class OrderService {
      * @param email      guest contact email (validated at the DTO layer)
      * @param quantities productId → quantity (already de-duplicated / merged)
      */
+    /** クーポン無しのゲストチェックアウト。 */
     @Transactional
     public Order guestCheckout(String email, Map<Long, Integer> quantities) {
+        return guestCheckout(email, quantities, null);
+    }
+
+    @Transactional
+    public Order guestCheckout(String email, Map<Long, Integer> quantities, String couponCode) {
         if (quantities == null || quantities.isEmpty()) {
             throw new BadRequestException("No items to order");
         }
@@ -107,7 +128,7 @@ public class OrderService {
         order.setGuestEmail(email);
         order.setOrderToken(UUID.randomUUID().toString());
         order.setStatus(OrderStatus.PENDING);
-        buildAndReserve(order, ordered);
+        buildAndReserve(order, ordered, couponCode);
 
         Order saved = orderRepository.save(order);
         // ゲストはこの通知でしか照会トークンを持ち帰れない（画面のバナーは閉じれば消える）。
@@ -116,20 +137,23 @@ public class OrderService {
     }
 
     /**
-     * Snapshots each line (price/name AND tax rate/amount), reserves its stock, and
-     * accumulates the order's subtotal / tax / total. The tax rate is resolved from the
-     * effective-dated {@link TaxRate} table for each product's category as of today and
-     * frozen onto the order — a later rate change never rewrites this order.
+     * Reserves stock, prices the order, and snapshots the result onto it.
+     *
+     * <p>Reservation and pricing are now two separate passes. They used to be one loop,
+     * which is why the shop could not quote a price without holding inventory, and why
+     * every new money concept (discount, shipping) would have had to be threaded through
+     * the stock code. The stock hold still happens first — if the cart cannot be filled,
+     * no price is worth computing.
+     *
+     * <p>Rates and prices are frozen here: a later rate change or price edit never
+     * rewrites this order.
      */
-    private void buildAndReserve(Order order, Map<Long, Integer> quantities) {
-        PricingMode mode = taxService.pricingMode();
+    private void buildAndReserve(Order order, Map<Long, Integer> quantities, String couponCode) {
         LocalDate today = LocalDate.now();
-        order.setPricingMode(mode);
+        order.setPricingMode(taxService.pricingMode());
 
-        BigDecimal subtotal = BigDecimal.ZERO;  // 税抜合計
-        BigDecimal taxTotal = BigDecimal.ZERO;  // 税額合計
-        BigDecimal total = BigDecimal.ZERO;     // 税込合計（支払額）
-
+        // --- 在庫の引当（不足ならここで止まる。値段の計算より先） ---
+        Map<Product, Integer> lines = new LinkedHashMap<>();
         for (Map.Entry<Long, Integer> entry : quantities.entrySet()) {
             Long productId = entry.getKey();
             int quantity = entry.getValue();
@@ -146,37 +170,39 @@ public class OrderService {
                 throw new BadRequestException(
                         "Not enough stock for '" + product.getName() + "'. Available: " + product.getAvailable());
             }
-
-            TaxCategory category = product.getTaxCategory();
-            BigDecimal rate = taxService.rateFor(category, today);
-
-            OrderItem orderItem = new OrderItem();
-            orderItem.setProduct(product);
-            orderItem.setProductName(product.getName());
-            orderItem.setUnitPrice(product.getPrice());
-            orderItem.setQuantity(quantity);
-            orderItem.setTaxCategory(category);
-            orderItem.setTaxRatePercent(rate);
-
-            BigDecimal lineListTotal = orderItem.getLineTotal(); // INCLUSIVE=税込 / EXCLUSIVE=税抜
-            BigDecimal lineTax = taxService.taxForLine(lineListTotal, rate, mode);
-            orderItem.setTaxAmount(lineTax);
-            order.addItem(orderItem);
-
-            if (mode == PricingMode.INCLUSIVE) {
-                total = total.add(lineListTotal);             // 税込
-                taxTotal = taxTotal.add(lineTax);
-                subtotal = subtotal.add(lineListTotal.subtract(lineTax)); // 税抜
-            } else { // EXCLUSIVE: price は税抜
-                subtotal = subtotal.add(lineListTotal);        // 税抜
-                taxTotal = taxTotal.add(lineTax);
-                total = total.add(lineListTotal.add(lineTax));  // 税込
-            }
+            lines.put(product, quantity);
         }
 
-        order.setSubtotalAmount(subtotal);
-        order.setTaxAmount(taxTotal);
-        order.setTotalAmount(total);
+        // --- クーポン: 商品合計が確定してからでないと最低金額の判定ができない ---
+        BigDecimal itemsList = lines.entrySet().stream()
+                .map(e -> e.getKey().getPrice().multiply(BigDecimal.valueOf(e.getValue())))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        Coupon coupon = couponService.validate(couponCode, itemsList, today);
+
+        // --- 金額（商品 → 割引 → 送料 → 税 → 合計） ---
+        OrderPricing pricing = orderPricer.price(lines, coupon, today);
+        for (PricedLine line : pricing.lines()) {
+            OrderItem orderItem = new OrderItem();
+            orderItem.setProduct(line.product());
+            orderItem.setProductName(line.product().getName());
+            orderItem.setUnitPrice(line.unitPrice());
+            orderItem.setQuantity(line.quantity());
+            orderItem.setTaxCategory(line.taxCategory());
+            orderItem.setTaxRatePercent(line.taxRate());
+            orderItem.setTaxAmount(line.tax());
+            orderItem.setDiscountAmount(line.discount());
+            order.addItem(orderItem);
+        }
+
+        order.setSubtotalAmount(pricing.itemSubtotal());
+        order.setDiscountAmount(pricing.discount());
+        order.setShippingAmount(pricing.shipping());
+        order.setTaxAmount(pricing.tax());
+        order.setTotalAmount(pricing.total());
+        order.setCouponCode(pricing.couponCode());
+
+        // 引き換え数を進めるのは最後。ここまでで例外が出た注文はそもそも成立していない。
+        couponService.redeem(coupon);
     }
 
     /**
@@ -189,6 +215,7 @@ public class OrderService {
         List<Order> stale = orderRepository.findByStatusAndCreatedAtBefore(OrderStatus.PENDING, cutoff);
         for (Order order : stale) {
             releaseHeldItems(order);
+            couponService.release(order.getCouponCode());
             order.setStatus(OrderStatus.EXPIRED);
             events.publishEvent(OrderExpiredEvent.of(order));
         }
@@ -247,9 +274,11 @@ public class OrderService {
             case PAID -> applyPaid(order, null, null);
             case CANCELLED -> {
                 // 未払い注文のキャンセルは引当を戻す。PAID 済みは既に実在庫が減っているので
-                // ここで戻すと在庫を二重に増やしてしまう。
+                // ここで戻すと在庫を二重に増やしてしまう。クーポンの引き換え数も同じ理屈で、
+                // 売上にならなかった注文の分だけ戻す（期限切れ済みは既に戻っている）。
                 if (previous == OrderStatus.PENDING) {
                     releaseHeldItems(order);
+                    couponService.release(order.getCouponCode());
                 }
                 order.setStatus(OrderStatus.CANCELLED);
                 events.publishEvent(OrderCancelledEvent.of(order, previous.name()));

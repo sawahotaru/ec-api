@@ -273,3 +273,14 @@ main { max-width: 1140px; margin: 0 auto; padding: 22px 20px 80px; }
 /* The picker is a <label> wrapping a hidden <input type="file">, so it needs the
    pointer affordance a <button> gets for free. */
 .img-actions label.btn { cursor: pointer; }
+
+/* Coupon + shipping (cart & admin) */
+.coupon-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.coupon-row input { flex: 1 1 auto; min-width: 0; padding: 8px 10px; border: 1px solid var(--line);
+    border-radius: 10px; font-size: 14px; text-transform: uppercase; }
+.coupon-state { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+.coupon-state.err { color: var(--danger); }
+/* 割引行だけ符号が逆なので、金額の向きが一目で分かるように色を変える */
+.tax-breakdown .disc span:last-child { color: var(--danger); }
+.inline-field { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.inline-field input { width: 110px; }

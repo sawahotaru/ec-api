@@ -17,6 +17,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import org.hibernate.annotations.ColumnDefault;
 
 @Entity
 @Table(name = "orders")
@@ -50,15 +51,34 @@ public class Order {
     @Column(nullable = false)
     private OrderStatus status = OrderStatus.PENDING;
 
-    /** 税抜合計（subtotal, tax-exclusive）. Snapshotted at checkout. */
+    /**
+     * 税抜の商品小計（<strong>割引前</strong>）. Snapshotted at checkout.
+     *
+     * <p>割引前の値を持つのは、「小計 / 割引 / 送料 / 税 / 合計」を並べて出すため。
+     * 割引を畳み込んだ小計は、その隣に割引行を出せない（二重に引くことになる）。
+     */
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal subtotalAmount = BigDecimal.ZERO;
 
-    /** 消費税額合計. Snapshotted at checkout. */
+    /** クーポン割引額（税抜換算）. 割引なしなら 0. */
+    @Column(nullable = false, precision = 12, scale = 2)
+    @ColumnDefault("0")
+    private BigDecimal discountAmount = BigDecimal.ZERO;
+
+    /** 送料（税抜）. 無料または送料設定なしなら 0. */
+    @Column(nullable = false, precision = 12, scale = 2)
+    @ColumnDefault("0")
+    private BigDecimal shippingAmount = BigDecimal.ZERO;
+
+    /** 適用されたクーポンのコード（注文時点のスナップショット）. 未適用なら null. */
+    @Column(length = 40)
+    private String couponCode;
+
+    /** 消費税額合計（商品＋送料・割引反映後）. Snapshotted at checkout. */
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal taxAmount = BigDecimal.ZERO;
 
-    /** 税込合計（支払総額）= subtotal + tax. */
+    /** 支払総額 = subtotal − discount + shipping + tax. */
     @Column(nullable = false, precision = 12, scale = 2)
     private BigDecimal totalAmount = BigDecimal.ZERO;
 
@@ -142,6 +162,30 @@ public class Order {
 
     public void setSubtotalAmount(BigDecimal subtotalAmount) {
         this.subtotalAmount = subtotalAmount;
+    }
+
+    public BigDecimal getDiscountAmount() {
+        return discountAmount;
+    }
+
+    public void setDiscountAmount(BigDecimal discountAmount) {
+        this.discountAmount = discountAmount;
+    }
+
+    public BigDecimal getShippingAmount() {
+        return shippingAmount;
+    }
+
+    public void setShippingAmount(BigDecimal shippingAmount) {
+        this.shippingAmount = shippingAmount;
+    }
+
+    public String getCouponCode() {
+        return couponCode;
+    }
+
+    public void setCouponCode(String couponCode) {
+        this.couponCode = couponCode;
     }
 
     public BigDecimal getTaxAmount() {

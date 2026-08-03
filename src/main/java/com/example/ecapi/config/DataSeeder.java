@@ -1,12 +1,15 @@
 package com.example.ecapi.config;
 
 import com.example.ecapi.domain.Category;
+import com.example.ecapi.domain.Coupon;
+import com.example.ecapi.domain.DiscountType;
 import com.example.ecapi.domain.Product;
 import com.example.ecapi.domain.Role;
 import com.example.ecapi.domain.TaxCategory;
 import com.example.ecapi.domain.TaxRate;
 import com.example.ecapi.domain.User;
 import com.example.ecapi.repository.CategoryRepository;
+import com.example.ecapi.repository.CouponRepository;
 import com.example.ecapi.repository.ProductRepository;
 import com.example.ecapi.repository.TaxRateRepository;
 import com.example.ecapi.repository.UserRepository;
@@ -28,6 +31,7 @@ public class DataSeeder implements CommandLineRunner {
     private final CategoryRepository categoryRepository;
     private final ProductRepository productRepository;
     private final TaxRateRepository taxRateRepository;
+    private final CouponRepository couponRepository;
     private final PasswordEncoder passwordEncoder;
 
     private final boolean seedEnabled;
@@ -38,6 +42,7 @@ public class DataSeeder implements CommandLineRunner {
                       CategoryRepository categoryRepository,
                       ProductRepository productRepository,
                       TaxRateRepository taxRateRepository,
+                      CouponRepository couponRepository,
                       PasswordEncoder passwordEncoder,
                       @Value("${app.seed.enabled}") boolean seedEnabled,
                       @Value("${app.seed.admin-email}") String adminEmail,
@@ -46,6 +51,7 @@ public class DataSeeder implements CommandLineRunner {
         this.categoryRepository = categoryRepository;
         this.productRepository = productRepository;
         this.taxRateRepository = taxRateRepository;
+        this.couponRepository = couponRepository;
         this.passwordEncoder = passwordEncoder;
         this.seedEnabled = seedEnabled;
         this.adminEmail = adminEmail;
@@ -60,9 +66,43 @@ public class DataSeeder implements CommandLineRunner {
         seedAdmin();
         seedDemoUser();
         seedTaxRates();
+        seedCoupons();
         if (categoryRepository.count() == 0 && productRepository.count() == 0) {
             seedCatalog();
         }
+    }
+
+    /**
+     * デモ用のクーポン2種。
+     *
+     * <p>カタログと違い「テーブルが空なら入れる」条件にしてあるので、<strong>稼働中のDBにも
+     * 一度だけ入る</strong>（税率と同じ扱い）。クーポンは機能そのものが目に見えないと
+     * デモにならず、かつ既存データを書き換えないため。
+     *
+     * <p>2種類あるのは、割引の効き方が違うものを1つずつ見せるため:
+     * 定額（税の按分が起きる）と送料無料（商品の金額には触れない）。
+     */
+    private void seedCoupons() {
+        if (couponRepository.count() > 0) {
+            return;
+        }
+        couponRepository.save(coupon("WELCOME500", "初回500円引き（3,000円以上）",
+                DiscountType.FIXED, "500", "3000"));
+        couponRepository.save(coupon("FREESHIP", "送料無料",
+                DiscountType.FREE_SHIPPING, "0", null));
+    }
+
+    private Coupon coupon(String code, String description, DiscountType type,
+                          String value, String minSubtotal) {
+        Coupon c = new Coupon();
+        c.setCode(code);
+        c.setDescription(description);
+        c.setDiscountType(type);
+        c.setValue(new BigDecimal(value));
+        if (minSubtotal != null) {
+            c.setMinSubtotal(new BigDecimal(minSubtotal));
+        }
+        return c;
     }
 
     /** 現行の消費税率: 標準10% / 軽減8%（2019-10-01〜・無期限）。将来の改定は行を追加する。 */

@@ -1,6 +1,7 @@
 package com.example.ecapi.controller;
 
 import com.example.ecapi.domain.User;
+import com.example.ecapi.dto.OrderDtos.CheckoutRequest;
 import com.example.ecapi.dto.OrderDtos.GuestCheckoutLine;
 import com.example.ecapi.dto.OrderDtos.GuestCheckoutRequest;
 import com.example.ecapi.dto.OrderDtos.OrderResponse;
@@ -38,11 +39,13 @@ public class OrderController {
         this.currentUserProvider = currentUserProvider;
     }
 
-    @Operation(summary = "Check out: turn the cart into an order")
+    @Operation(summary = "Check out: turn the cart into an order",
+            description = "本文は任意。`{\"couponCode\":\"...\"}` を渡すとクーポンを適用する。")
     @PostMapping("/checkout")
-    public ResponseEntity<OrderResponse> checkout() {
+    public ResponseEntity<OrderResponse> checkout(@RequestBody(required = false) CheckoutRequest request) {
         User user = currentUserProvider.require();
-        OrderResponse response = OrderResponse.from(orderService.checkout(user));
+        String couponCode = request != null ? request.couponCode() : null;
+        OrderResponse response = OrderResponse.from(orderService.checkout(user, couponCode));
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
@@ -59,7 +62,7 @@ public class OrderController {
             }
         }
         OrderResponse response = OrderResponse.fromWithToken(
-                orderService.guestCheckout(request.email(), quantities));
+                orderService.guestCheckout(request.email(), quantities, request.couponCode()));
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 

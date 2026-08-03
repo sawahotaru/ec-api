@@ -72,6 +72,12 @@ app:
     pricing-mode: ${APP_TAX_PRICING_MODE:INCLUSIVE}
     # 端数処理: FLOOR=切り捨て(JP小売で一般的) / HALF_UP=四捨五入 / CEILING=切り上げ。
     rounding: ${APP_TAX_ROUNDING:FLOOR}
+  shipping:
+    # 送料の**初期値**。一度でも管理画面から保存されたら以後はDBの値が優先される
+    # （税の内税/外税と同じ扱い）。金額は商品価格と同じ流儀で読む。
+    fee: ${APP_SHIPPING_FEE:0}
+    # これ以上（割引後の商品合計）で送料無料。0 なら無料にはならない。
+    free-threshold: ${APP_SHIPPING_FREE_THRESHOLD:0}
   payment:
     # 決済手段によらない共通設定。決済手段そのものは PaymentProvider の実装として
     # 追加され、有効化された実装だけが /api/payments/config に現れる。
