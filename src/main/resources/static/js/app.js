@@ -309,18 +309,19 @@ async function showAdmin() {
     }
     box.innerHTML = '<p class="empty">読み込み中…</p>';
     try {
-        const [settings, rates] = await Promise.all([
+        const [settings, rates, products] = await Promise.all([
             api("/api/admin/settings", { auth: true }),
             api("/api/admin/tax-rates", { auth: true }),
+            api("/api/products?size=100&sort=id"),
         ]);
-        renderAdmin(settings, rates);
+        renderAdmin(settings, rates, products.content || []);
     } catch (ex) {
         box.innerHTML = `<a href="#/" class="back-link">← 商品一覧へ戻る</a>
             <p class="empty">管理情報を取得できませんでした: ${escapeHtml(ex.message)}</p>`;
     }
 }
 
-function renderAdmin(settings, rates) {
+function renderAdmin(settings, rates, products) {
     const mode = settings.pricingMode;
     const today = new Date().toISOString().slice(0, 10);
     // Sort so the effective-date timeline reads top-down per category.
@@ -387,7 +388,90 @@ function renderAdmin(settings, rates) {
                     <button class="btn" data-act="add-rate">追加</button>
                 </div>
             </div>
+        </section>
+
+        ${productImagesCardHtml(products || [])}`;
+}
+
+/* ---------- product images ----------
+   商品ごとに1枚。選ぶと即アップロードする（「選択」と「保存」を分けると、
+   選んだだけで保存したつもりになる取り違えが起きるため）。
+   サーバー側は先頭バイトで形式を判定するので、ここでの accept はあくまで
+   ファイル選択ダイアログの絞り込み＝利便性であって、検証ではない。 */
+function productImagesCardHtml(products) {
+    if (products.length === 0) {
+        return `<section class="admin-card"><h2>商品画像</h2>
+            <p class="empty">商品が登録されていません。</p></section>`;
+    }
+    const rows = products.map((p) => {
+        const img = imageStyle(p.imageUrl);
+        const uploaded = (p.imageUrl || "").startsWith("images/uploads/");
+        const source = !p.imageUrl ? "未設定"
+            : uploaded ? "アップロード画像"
+            : /^(https?:)?\/\//.test(p.imageUrl) ? "外部URL" : "同梱画像";
+        return `
+        <div class="img-row" data-product="${p.id}">
+            <div class="img-thumb${p.imageUrl ? "" : " img-none"}" style="${img}"></div>
+            <div class="img-main">
+                <strong>${escapeHtml(p.name)}</strong>
+                <span class="lmeta">${source}</span>
+            </div>
+            <div class="img-actions">
+                <label class="btn ghost sm">
+                    画像を選ぶ
+                    <input type="file" accept="image/jpeg,image/png,image/webp" data-act="pick-image" hidden>
+                </label>
+                ${p.imageUrl ? '<button class="link-danger" data-act="drop-image">画像を外す</button>' : ""}
+            </div>
+        </div>`;
+    }).join("");
+
+    return `
+        <section class="admin-card">
+            <h2>商品画像</h2>
+            <p class="hint">JPEG / PNG / WebP・1枚 2MB まで。選んだ時点で<strong>すぐ反映</strong>されます。
+               <br>差し替えると古い画像ファイルは削除されます。「同梱画像」は初期データに含まれるもので、
+               外すと商品からは消えますがファイルは残ります。</p>
+            ${rows}
         </section>`;
+}
+
+async function uploadProductImage(row, file) {
+    if (!file) return;
+    const id = row.dataset.product;
+    const form = new FormData();
+    form.append("file", file);
+    try {
+        toast("アップロード中…");
+        // FormData を送るときは Content-Type を自前で付けない（boundary が壊れる）。
+        const res = await fetch(`${BASE}/api/admin/products/${id}/image`, {
+            method: "POST",
+            headers: state.token ? { Authorization: "Bearer " + state.token } : {},
+            body: form,
+        });
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : null;
+        if (!res.ok) {
+            throw new Error((data && data.message)
+                || (res.status === 503 ? "サーバー側で画像の保存先を用意できていません" : `${res.status} ${res.statusText}`));
+        }
+        await afterProductImageChange("画像を更新しました");
+    } catch (ex) { toast(ex.message); }
+}
+
+async function dropProductImage(row) {
+    if (!window.confirm("この商品の画像を外しますか？")) return;
+    try {
+        await api(`/api/admin/products/${row.dataset.product}/image`, { method: "DELETE", auth: true });
+        await afterProductImageChange("画像を外しました");
+    } catch (ex) { toast(ex.message); }
+}
+
+// 画像は買い手側の一覧にもそのまま出るので、税率変更と同じく店頭を描き直す。
+async function afterProductImageChange(msg) {
+    await loadProducts();
+    await showAdmin();
+    toast(msg);
 }
 
 /* Which rows are actually in force today — mirrors TaxRateRepository.findEffective:
@@ -1047,6 +1131,8 @@ function bind() {
                 toast("記録を削除しました");
                 return;
             }
+            const imgRow = act.closest(".img-row");
+            if (imgRow && kind === "drop-image") { dropProductImage(imgRow); return; }
             const tr = act.closest("tr[data-rate]");
             if (tr && kind === "save-rate") { saveRate(tr); return; }
             if (tr && kind === "del-rate") { deleteRate(tr); return; }
@@ -1062,6 +1148,17 @@ function bind() {
             else if (act === "dec") setQty(id, cur - 1);
             else if (act === "rm") setQty(id, 0);
         }
+    });
+
+    // 商品画像の <input type="file">。click ではなく change で拾う必要があるので、
+    // 上のクリック委譲とは別に張る（管理パネルは再描画されるため要素直付けはしない）。
+    document.addEventListener("change", (e) => {
+        const picker = e.target.closest('[data-act="pick-image"]');
+        if (!picker) return;
+        const row = picker.closest(".img-row");
+        const file = picker.files && picker.files[0];
+        picker.value = "";   // 同じファイルを選び直しても change が発火するようにする
+        if (row) uploadProductImage(row, file);
     });
 }
 

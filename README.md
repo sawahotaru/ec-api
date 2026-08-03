@@ -53,6 +53,7 @@ checkout → PENDING（在庫を hold）
 | 税（公開） | `GET /api/tax/config`（内税/外税と現行税率） | 公開 |
 | 決済 | `GET /api/payments/config`, `POST /api/payments/orders/{id}/checkout-session?provider=`, `POST /api/payments/guest/orders/{id}/checkout-session`, `POST /api/payments/{providerId}/webhook`, `GET /api/payments/{providerId}/instructions` | 公開 / 本人 |
 | 管理: 商品 | `POST/PUT/DELETE /api/admin/products` | ADMIN |
+| 管理: 商品画像 | `POST /api/admin/products/{id}/image`（multipart `file`）, `DELETE /api/admin/products/{id}/image` | ADMIN |
 | 管理: カテゴリ | `POST/PUT/DELETE /api/admin/categories` | ADMIN |
 | 管理: 注文 | `GET /api/admin/orders`, `/{id}`, `PATCH /api/admin/orders/{id}/status` | ADMIN |
 | 管理: 税率 | `GET/POST/PUT/DELETE /api/admin/tax-rates` | ADMIN |
@@ -72,7 +73,28 @@ checkout → PENDING（在庫を hold）
 | `#/orders/guest` | **ゲスト注文の照会**。注文番号＋トークンで確認する。未ログイン時だけヘッダに「🔎 注文照会」が出る |
 | `#/orders/guest/{id}/{token}` | 上記の deep link。1件の注文をブックマークできる |
 
-管理パネルからは **内税/外税トグル**と**税率テーブルの追加・改定・削除**ができます（「適用中」バッジはサーバーの実効税率判定と同じロジック＝終了日は排他的）。カートには税内訳（小計 / 消費税 / 合計）が出ます。
+管理パネルからは **内税/外税トグル**・**税率テーブルの追加・改定・削除**・**商品画像の差し替え**ができます（「適用中」バッジはサーバーの実効税率判定と同じロジック＝終了日は排他的）。カートには税内訳（小計 / 消費税 / 合計）が出ます。
+
+### 商品画像のアップロード
+
+管理パネルの「商品画像」から、商品ごとに1枚を差し替えられます。選んだ時点で即反映（「選択」と「保存」を分けない）。
+
+**受け付ける条件は先頭バイトで判定します。** 拡張子も `Content-Type` もリクエスト側の申告でしかないため、判定材料にしていません。
+
+| 項目 | 仕様 |
+|---|---|
+| 形式 | JPEG / PNG / WebP のみ |
+| **SVG** | **拒否**。XML にスクリプトを埋められ、これを自サイトのオリジンから配信すると保存型 XSS になる |
+| サイズ | 既定 2MB（`APP_UPLOADS_MAX_SIZE` / `APP_UPLOADS_MAX_BYTES`）。超過は **413** |
+| 保存名 | サーバーが生成（`p{商品ID}-{乱数}.{拡張子}`）。**クライアントのファイル名は使わない**＝パストラバーサルの材料が無い |
+| 保存先 | `APP_UPLOADS_DIR`（既定 `./data/uploads`）。作成できない/読み取り専用ならアップロードだけ **503**（他機能は通常どおり） |
+| 公開URL | `images/uploads/…`（相対パス。`/ec` 配下でもそのまま解決される） |
+
+差し替え・画像を外す・商品削除のいずれでも、**こちらがアップロードした実体ファイルは一緒に消えます**。同梱画像（`images/products/…`）や外部URLを指していた場合はファイルに触りません（jar の中身であって、こちらの持ち物ではないため）。
+
+> ⚠️ **保存先は jar の外に置く必要があります。** コンテナを作り直すと消えるため、本番（oracle-lab）では
+> `./ec-uploads:/app/uploads` をマウントし、rsync の `--delete` からも除外しています。
+> 日次バックアップにも `ecuploads_*.tar.gz` として含めています（DB の `imageUrl` だけ戻しても画像は 404 になるため）。
 
 ### ゲスト注文の照会
 
@@ -197,6 +219,8 @@ Swagger UI なら右上の **Authorize** にトークンを貼れば全エンド
 | `APP_TAX_PRICING_MODE` | `INCLUSIVE`（内税）/ `EXCLUSIVE`（外税）の**初期値**（以後は管理画面の設定が優先） | INCLUSIVE |
 | `APP_TAX_ROUNDING` | 端数処理 `FLOOR` / `HALF_UP` / `CEILING` | FLOOR |
 | `APP_CONTEXT_PATH` | サブパス配信時のプレフィックス（本番は `/ec`） | （空＝ルート） |
+| `APP_UPLOADS_DIR` | 商品画像の保存先（**jar の外・永続ボリューム推奨**） | `./data/uploads` |
+| `APP_UPLOADS_MAX_SIZE` / `APP_UPLOADS_MAX_BYTES` | 1ファイルの上限（前者は multipart 側・後者はアプリ側。**揃えること**） | 2MB / 2097152 |
 | `PUBLIC_BASE_URL` | 通知メールに載せる絶対リンクの基点（context-path 込み。例 `https://lab.4510.be/ec`） | （空＝直リンクの代わりに注文番号＋トークンを本文に記載） |
 | `PAYMENT_CURRENCY` | 通貨（決済手段によらない共通設定） | jpy（`STRIPE_CURRENCY` も後方互換で有効） |
 | `PAYMENT_DEFAULT_PROVIDER` | 決済手段未指定時の既定 id | stripe（無効なら有効な手段へ自動フォールバック） |

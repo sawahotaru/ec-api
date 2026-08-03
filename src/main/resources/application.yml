@@ -32,11 +32,26 @@ spring:
     console:
       enabled: true
 
+  servlet:
+    multipart:
+      # 商品画像アップロードの上限。ここは「バッファに載せる前に container が弾く」段で、
+      # app.uploads.max-bytes はアプリ側の同じ上限（両方に置くのは、この class が
+      # multipart 以外から呼ばれても上限が消えないようにするため）。
+      max-file-size: ${APP_UPLOADS_MAX_SIZE:2MB}
+      max-request-size: ${APP_UPLOADS_MAX_SIZE:2MB}
+
 app:
   # 店舗フロントの公開URL（末尾スラッシュ不要。VM では context-path を含めて "/ec" まで）。
   # メール等の外向き通知に載せる絶対リンクの組み立てに使う。未設定でも動くが、
   # ゲスト注文メールは直リンクの代わりに注文番号＋トークンの手入力案内になる。
   public-base-url: ${PUBLIC_BASE_URL:}
+  uploads:
+    # 管理画面から上げた商品画像の置き場。jar の外＝再デプロイで消えないよう、
+    # 本番(VM)では compose のボリュームを指す。作成できない/読み取り専用なら
+    # アップロードだけが 503 になり、他の機能はそのまま動く。
+    dir: ${APP_UPLOADS_DIR:./data/uploads}
+    # 1ファイルの上限（バイト）。spring.servlet.multipart 側と揃える。
+    max-bytes: ${APP_UPLOADS_MAX_BYTES:2097152}
   jwt:
     # Overridden by APP_JWT_SECRET in production. Must be >= 32 bytes for HS256.
     secret: ${APP_JWT_SECRET:change-me-in-production-please-32bytes-minimum-secret}

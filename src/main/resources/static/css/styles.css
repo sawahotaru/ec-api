@@ -260,3 +260,16 @@ main { max-width: 1140px; margin: 0 auto; padding: 22px 20px 80px; }
 .admin-table input[type="number"] { width: 80px; }
 .btn.sm { padding: 6px 10px; font-size: 12px; }
 .rate-new-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+/* Product images (admin) */
+.img-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.img-row:last-of-type { border-bottom: none; }
+.img-thumb { flex: 0 0 auto; width: 56px; height: 56px; border-radius: 10px; border: 1px solid var(--line);
+    background-size: cover; background-position: center; background-color: #f1f2f6; }
+.img-thumb.img-none { background-image: none; }
+.img-main { flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.img-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.img-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
+/* The picker is a <label> wrapping a hidden <input type="file">, so it needs the
+   pointer affordance a <button> gets for free. */
+.img-actions label.btn { cursor: pointer; }

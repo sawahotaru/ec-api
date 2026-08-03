@@ -12,6 +12,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -39,6 +40,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, Object>> handleAccessDenied(AccessDeniedException ex) {
         return build(HttpStatus.FORBIDDEN, "Access denied");
+    }
+
+    /**
+     * The servlet container aborts an oversized upload before the controller runs, so this
+     * never reaches the size check in ProductImageStorage. Without a handler it surfaces as
+     * a 500, which reads as "the server is broken" rather than "your file is too big".
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleUploadTooLarge(MaxUploadSizeExceededException ex) {
+        return build(HttpStatus.PAYLOAD_TOO_LARGE, "アップロードできるファイルサイズを超えています");
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
