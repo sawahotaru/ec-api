@@ -174,10 +174,29 @@ docker run --rm -p 8080:8080 ec-api
 ```bash
 docker compose up --build
 # → http://localhost:8080/swagger-ui.html
-# ホストポートは docker-compose.yml の ports で定義（既定 8080）
+```
+
+**設定は何も要りません**が、値はすべて `.env` から差し替えられます。
+
+```bash
+cp .env.example .env    # ポート・DBパスワード・JWT鍵・デモ用の制限など
 ```
 
 > ローカルに JDK は不要（すべて Docker 内でビルド）。JDK 21 + Maven があれば `mvn spring-boot:run` でも可。
+
+### ⚠️ 公開する前に差し替えるもの
+
+**そのまま `docker run` すると開発用の既定値で起動します。** 何も設定しなくても動くのは意図した設計ですが、その既定値は公開してよい値ではありません。危険度の順に3つあります（詳細は [`.env.example`](.env.example)）。
+
+| | 値 | 既定のままだと | 差し替え |
+|---|---|---|---|
+| 🔴 | `APP_JWT_SECRET` | **誰でもトークンを偽造できる**（管理者になりすませる）。パスワードを強くしても無意味になるので、まずここ | `openssl rand -base64 48` |
+| 🟠 | `APP_ADMIN_PASSWORD` | この README に載っている公開値で管理画面に入られる | `openssl rand -base64 24` |
+| 🟠 | `EC_DB_PASSWORD` | DB に直接つながれる | `openssl rand -base64 24` |
+
+実運用に使うなら **`APP_SEED_ENABLED=false`** も検討してください。true のままだとデモ用アカウント（`user@example.com` / `user1234`・**現状この値は変更できません**）が作られます。`USER` ロールなので管理APIには届きませんが、既知の資格情報で入れるアカウントが残ります。
+
+> 本番（oracle-lab）の compose は `${APP_JWT_SECRET:?…}` の形にしてあり、**未設定なら起動しません**。同じやり方にしておくと差し替え忘れが構造的に起きなくなります。
 
 ## テスト
 

@@ -1,18 +1,25 @@
 # Local dev: Spring Boot API + PostgreSQL, mirroring the production setup.
 # Usage: docker compose up --build   ->   http://localhost:8080/swagger-ui.html
+#
+# 値はすべて .env から差し替えられる（`cp .env.example .env`）。
+# **何も設定しなくても動く**ように既定値を入れてあるが、その既定値は開発用であって
+# 公開してよい値ではない。何を替えるべきかは .env.example に危険度つきで書いてある。
 services:
   db:
+    # ⚠ 本番(oracle-lab)は postgres:18-alpine。ここが 16 のままなのは意図的で、
+    #    上げると既存の pgdata ボリュームが使えなくなる（PG18 でデータディレクトリの
+    #    規約が変わり、マウント先ごと作り直しが要る）。揃えるときは volume を捨てること。
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ecapi
-      POSTGRES_USER: ecapi
-      POSTGRES_PASSWORD: ecapi
+      POSTGRES_DB: ${EC_DB_NAME:-ecapi}
+      POSTGRES_USER: ${EC_DB_USER:-ecapi}
+      POSTGRES_PASSWORD: ${EC_DB_PASSWORD:-ecapi}
     ports:
-      - "5432:5432"
+      - "${DB_HOST_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ecapi"]
+      test: ["CMD-SHELL", "pg_isready -U ${EC_DB_USER:-ecapi}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -24,14 +31,42 @@ services:
         condition: service_healthy
     environment:
       SPRING_PROFILES_ACTIVE: postgres
-      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/ecapi
-      SPRING_DATASOURCE_USERNAME: ecapi
-      SPRING_DATASOURCE_PASSWORD: ecapi
-      APP_JWT_SECRET: local-dev-secret-please-change-me-32bytes-minimum
-      APP_SEED_ENABLED: "true"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${EC_DB_NAME:-ecapi}
+      SPRING_DATASOURCE_USERNAME: ${EC_DB_USER:-ecapi}
+      SPRING_DATASOURCE_PASSWORD: ${EC_DB_PASSWORD:-ecapi}
+
+      # 🔴 公開する場所では必ず差し替える（既定のままだとトークンを偽造できる）
+      APP_JWT_SECRET: ${APP_JWT_SECRET:-local-dev-secret-please-change-me-32bytes-minimum}
+      # 🟠 README に載っている公開値。実運用なら差し替えるか、シードごと切る
+      APP_ADMIN_EMAIL: ${APP_ADMIN_EMAIL:-admin@example.com}
+      APP_ADMIN_PASSWORD: ${APP_ADMIN_PASSWORD:-admin1234}
+      APP_SEED_ENABLED: ${APP_SEED_ENABLED:-true}
+
+      APP_SHIPPING_FEE: ${APP_SHIPPING_FEE:-0}
+      APP_SHIPPING_FREE_THRESHOLD: ${APP_SHIPPING_FREE_THRESHOLD:-0}
+      APP_UPLOADS_DIR: ${APP_UPLOADS_DIR:-/app/uploads}
+
+      # 公開デモとして見せるときだけ有効にする（既定は無効）
+      APP_DEMO_READ_ONLY: ${APP_DEMO_READ_ONLY:-false}
+      APP_DEMO_MASK_CONTACT: ${APP_DEMO_MASK_CONTACT:-false}
+      APP_DEMO_RETENTION_DAYS: ${APP_DEMO_RETENTION_DAYS:-0}
+
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      BANK_TRANSFER_ENABLED: ${BANK_TRANSFER_ENABLED:-false}
+
+      NOTIFY_MAIL_ENABLED: ${NOTIFY_MAIL_ENABLED:-false}
+      NOTIFY_MAIL_FROM: ${NOTIFY_MAIL_FROM:-no-reply@example.com}
+      NOTIFY_MAIL_ADMIN: ${NOTIFY_MAIL_ADMIN:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+
       PORT: "8080"
     ports:
-      - "8080:8080"
+      - "${HOST_PORT:-8080}:8080"
+    volumes:
+      # 商品画像はコンテナの外へ。これが無いと `up --build` のたびに消える。
+      - ecuploads:/app/uploads
 
 volumes:
   pgdata:
+  ecuploads:
