@@ -114,7 +114,7 @@ docker compose up --build
 ```bash
 mvn -B clean test
 # JDK が無ければ Docker で:
-docker run --rm -v "$PWD:/app" -w /app maven:3.9-eclipse-temurin-21 mvn -B clean test
+docker run --rm -v "$PWD:/app" -w /app maven:3-eclipse-temurin-26 mvn -B clean test
 ```
 
 H2 インメモリで完結するので、DB もネットワークサービスも不要です。中身は在庫ライフサイクル（引当 → 確定 or 解放）の回帰テストで、**Webhook の重複配信で二重に在庫が減らないこと**・**管理画面からの手動 PAID でも引当が実減算に変換されること**を固定しています。CI（`.github/workflows/deploy-notify.yml`）ではこれが通ったときだけデプロイが走ります。
