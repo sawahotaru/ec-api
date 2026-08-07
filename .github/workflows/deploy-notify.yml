@@ -19,6 +19,13 @@ name: Deploy to lab.4510.be
 on:
   push:
     branches: [ main ]
+    # 死活監視ワークフローは本番コードと無関係。通知間隔を1行直しただけで
+    # VM の ec-api が再ビルド・再起動されるのは割に合わないので除外する。
+    # ⚠ 除外はここだけに留めること。`.github/workflows/**` や `**/*.md` を
+    #   まるごと除外すると、このファイル自身の変更が未検証のまま本番経路を変えたり、
+    #   README だけの push で上の秘密スキャンが飛んだりする。
+    paths-ignore:
+      - '.github/workflows/uptime.yml'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
