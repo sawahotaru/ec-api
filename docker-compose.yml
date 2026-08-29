@@ -6,9 +6,9 @@
 # 公開してよい値ではない。何を替えるべきかは .env.example に危険度つきで書いてある。
 services:
   db:
-    # ⚠ 本番(oracle-lab)は postgres:18-alpine。ここが 16 のままなのは意図的で、
-    #    上げると既存の pgdata ボリュームが使えなくなる（PG18 でデータディレクトリの
-    #    規約が変わり、マウント先ごと作り直しが要る）。揃えるときは volume を捨てること。
+    # ⚠ ここが 16 のままなのは意図的。上げると既存の pgdata ボリュームが使えなくなる
+    #    （PG18 でデータディレクトリの規約が変わり、マウント先ごと作り直しが要る）。
+    #    上げるときは volume を捨てること。
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: ${EC_DB_NAME:-ecapi}

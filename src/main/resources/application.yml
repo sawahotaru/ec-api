@@ -145,8 +145,8 @@ server:
   #    構成で有効にしてはいけない。VM では ec-api はポートを公開せず Caddy 経由でしか
   #    到達できないため framework を渡している。
   forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:none}
-  # Empty locally (served at "/"); set to "/ec" on the Oracle VM so the app
-  # lives at lab.4510.be/ec/ alongside clinic at /clinic-reservation/.
+  # Empty locally (served at "/"); set to "/ec" in production so the app can
+  # live under a path prefix alongside other apps on the same host.
   servlet:
     context-path: ${APP_CONTEXT_PATH:}
 

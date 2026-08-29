@@ -27,7 +27,7 @@ import org.springframework.test.context.DynamicPropertySource;
  * <p>アップロードは「保存できる」だけでは足りない。DB の {@code imageUrl} と実ファイルは
  * 別々の場所にあるので、放っておくと<strong>片方だけが残る</strong>:
  * 差し替えれば古いファイルが誰からも参照されないまま残り、商品を消せば画像だけが残る。
- * 公開デモの容量は Always Free の 1VM 分しかないため、これは実際に効いてくる。
+ * 公開デモに割り当てている容量は小さいため、これは実際に効いてくる。
  *
  * <p>逆に、同梱画像（{@code images/products/…}）や外部URLを指している商品を消したときに
  * ファイル削除が走ってはいけない。そちらは jar の中身であって、こちらの持ち物ではない。

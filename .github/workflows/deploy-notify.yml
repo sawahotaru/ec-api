@@ -1,26 +1,19 @@
-name: Deploy to lab.4510.be
+name: CI
 
-# このリポジトリの main が更新されたら、まず検査（`mvn test` ＋ **Dockerイメージのビルドと
-# 起動確認**）を回し、**両方通ったときだけ** 統合ハブ oracle-lab のデプロイを起動する。
+# main が更新されたら検査（`mvn test` ＋ **Docker イメージのビルドと起動確認**）を回し、
+# **両方通ったときだけ**公開先へ反映を依頼する。
 #
 # ⚠ 2026-07-29 追加: 以前は `mvn test`（JDK21）だけがゲートで、**Dockerfile を一度も
 #   ビルドしていなかった**。そのためベースイメージの更新PR（JDK 21→26/25）は CI が緑でも
-#   実質未検証で、VMでビルドして初めて成否が分かる状態だった。image ジョブを足して塞いだ。
-# oracle-lab 側 (deploy-oracle.yml) が repository_dispatch: ec-api-updated を受け、
-# client_payload.service=ec-api を見て **ec-api サービスだけ** をVMで再ビルド/再起動する
-# （VMのビルド負荷を最小化する方式）。
+#   実質未検証で、実際に動かして初めて成否が分かる状態だった。image ジョブを足して塞いだ。
 #
-# 必要な設定（1回だけ）: このリポジトリの Settings → Secrets and variables → Actions に
-#   Secret `OL_DISPATCH_PAT` を追加。値は sawahotaru/oracle-lab へ書き込める PAT。
-#     - fine-grained PAT: Repository access=sawahotaru/oracle-lab のみ、Permissions → Contents: Read and write
-#     - もしくは classic PAT: scope `repo`
-#   ※ Actions 標準の GITHUB_TOKEN は他リポジトリを起動できないため PAT が必須。
+# デプロイ通知には Secret `OL_DISPATCH_PAT` が要る（設定手順は運用側で管理）。
 
 on:
   push:
     branches: [ main ]
     # 死活監視ワークフローは本番コードと無関係。通知間隔を1行直しただけで
-    # VM の ec-api が再ビルド・再起動されるのは割に合わないので除外する。
+    # 本番が再ビルド・再起動されるのは割に合わないので除外する。
     # ⚠ 除外はここだけに留めること。`.github/workflows/**` や `**/*.md` を
     #   まるごと除外すると、このファイル自身の変更が未検証のまま本番経路を変えたり、
     #   README だけの push で上の秘密スキャンが飛んだりする。
@@ -133,13 +126,13 @@ jobs:
         run: docker rm -f ec-api-ci || true
 
   notify:
-    name: Trigger oracle-lab deploy
+    name: Notify deploy
     needs: [test, image]
     # テストが通った main への push のときだけデプロイする（PR では走らせない）
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger oracle-lab deploy (scoped to ec-api)
+      - name: Notify deploy
         env:
           TOKEN: ${{ secrets.OL_DISPATCH_PAT }}
         run: |
@@ -153,4 +146,4 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/sawahotaru/oracle-lab/dispatches \
             -d '{"event_type":"ec-api-updated","client_payload":{"service":"ec-api","ref":"${{ github.sha }}"}}'
-          echo "Dispatched ec-api-updated → oracle-lab (deploys ec-api only)."
+          echo "Dispatched."

@@ -17,7 +17,7 @@ const STATUS_LABEL = {
 function statusLabel(status) { return STATUS_LABEL[status] || status; }
 
 // The app can be served at the site root ("/") locally or under a sub-path
-// (e.g. "/ec/" behind Caddy on the Oracle VM). Derive the base from this
+// (e.g. "/ec/" behind a reverse proxy). Derive the base from this
 // script's own URL — <BASE>/js/app.js — so no build-time config is needed.
 // Result: "" at the root, "/ec" under /ec.
 const SELF = document.currentScript || document.scripts[document.scripts.length - 1];
