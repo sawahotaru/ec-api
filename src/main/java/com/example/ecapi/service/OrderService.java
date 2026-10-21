@@ -12,6 +12,7 @@ import com.example.ecapi.event.OrderExpiredEvent;
 import com.example.ecapi.event.OrderPaidEvent;
 import com.example.ecapi.event.OrderPlacedEvent;
 import com.example.ecapi.exception.BadRequestException;
+import com.example.ecapi.exception.ConflictException;
 import com.example.ecapi.exception.NotFoundException;
 import com.example.ecapi.pricing.OrderPricer;
 import com.example.ecapi.pricing.OrderPricing;
@@ -45,6 +46,7 @@ public class OrderService {
     private final TaxService taxService;
     private final CouponService couponService;
     private final OrderPricer orderPricer;
+    private final CheckoutLimits limits;
     private final ApplicationEventPublisher events;
 
     public OrderService(OrderRepository orderRepository,
@@ -53,7 +55,9 @@ public class OrderService {
                         TaxService taxService,
                         CouponService couponService,
                         OrderPricer orderPricer,
+                        CheckoutLimits limits,
                         ApplicationEventPublisher events) {
+        this.limits = limits;
         this.orderRepository = orderRepository;
         this.cartItemRepository = cartItemRepository;
         this.productRepository = productRepository;
@@ -152,6 +156,12 @@ public class OrderService {
         LocalDate today = LocalDate.now();
         order.setPricingMode(taxService.pricingMode());
 
+        // --- 1注文として受け付けてよい形か（在庫を触る前に落とす） ---
+        if (limits.maxLinesPerOrder() > 0 && quantities.size() > limits.maxLinesPerOrder()) {
+            throw new BadRequestException(
+                    "1回のご注文でお求めいただける商品は" + limits.maxLinesPerOrder() + "種類までです");
+        }
+
         // --- 在庫の引当（不足ならここで止まる。値段の計算より先） ---
         Map<Product, Integer> lines = new LinkedHashMap<>();
         for (Map.Entry<Long, Integer> entry : quantities.entrySet()) {
@@ -160,15 +170,27 @@ public class OrderService {
             if (quantity < 1) {
                 throw new BadRequestException("Quantity must be at least 1 for product " + productId);
             }
+            if (limits.maxQuantityPerItem() > 0 && quantity > limits.maxQuantityPerItem()) {
+                throw new BadRequestException(
+                        "同じ商品は1回のご注文で" + limits.maxQuantityPerItem() + "点までです");
+            }
             Product product = productRepository.findById(productId)
                     .orElseThrow(() -> new NotFoundException("Product no longer exists: " + productId));
 
-            // Atomic conditional hold: only succeeds if enough is still sellable.
+            // Atomic conditional hold: only succeeds if enough is still sellable *and*
+            // unpaid holds stay under the configured share of this product's stock.
             // DB-level guard prevents overselling under concurrent checkouts.
-            int updated = productRepository.reserveStock(productId, quantity);
+            int updated = productRepository.reserveStock(productId, quantity, limits.maxHoldPercent());
             if (updated == 0) {
-                throw new BadRequestException(
-                        "Not enough stock for '" + product.getName() + "'. Available: " + product.getAvailable());
+                // 同じ 0 行でも理由は2つある。素の在庫が足りないなら従来どおりの案内で正しいが、
+                // 「在庫はあるのに引当上限で断った」ときに「在庫がありません」と言うのは嘘で、
+                // しかも時間で解ける話なのに客は諦めてしまう。
+                if (product.getAvailable() < quantity) {
+                    throw new BadRequestException("Not enough stock for '" + product.getName()
+                            + "'. Available: " + product.getAvailable());
+                }
+                throw new ConflictException("'" + product.getName()
+                        + "' はただいま仮押さえが集中しています。しばらく時間をおいてお試しください。");
             }
             lines.put(product, quantity);
         }
@@ -220,6 +242,34 @@ public class OrderService {
             events.publishEvent(OrderExpiredEvent.of(order));
         }
         return stale.size();
+    }
+
+    /**
+     * 一度も支払われないまま終わった古い注文を、行ごと削除する。
+     *
+     * <p>{@code ContactRetentionScheduler} は連絡先だけを伏せて<strong>行は残す</strong>。
+     * それは「消すと売上集計から過去が消える」ためで、PAID については今も正しい。
+     * だが EXPIRED / CANCELLED は集計に1円も入らないので、残す理由が無い——そして
+     * 注文は<strong>未認証で何件でも作れる</strong>ので、残し続けること自体が
+     * 小さなVMに対するディスク枯渇の経路になる（{@code guestEmail} は攻撃者が決める文字列）。
+     *
+     * <p>明細も一緒に消える（{@code Order} → {@code OrderItem} は cascade + orphanRemoval）。
+     * 引当はこの時点で既に解放済み（EXPIRED / CANCELLED になった時点で戻している）。
+     *
+     * @param batchSize 1回の掃除で消す上限。全部消すまで回さないのは、溜まった環境で
+     *                  1トランザクションが巨大にならないようにするため（次の周回で続く）。
+     * @return 消した件数
+     */
+    @Transactional
+    public int purgeAbandonedOrders(java.time.Instant cutoff, int batchSize) {
+        List<OrderStatus> abandoned = List.of(OrderStatus.EXPIRED, OrderStatus.CANCELLED);
+        Page<Order> doomed = orderRepository.findByStatusInAndCreatedAtBefore(
+                abandoned, cutoff, org.springframework.data.domain.PageRequest.of(0, batchSize));
+        if (doomed.isEmpty()) {
+            return 0;
+        }
+        orderRepository.deleteAll(doomed.getContent());
+        return doomed.getNumberOfElements();
     }
 
     @Transactional(readOnly = true)

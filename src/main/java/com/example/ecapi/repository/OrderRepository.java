@@ -30,6 +30,18 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     /** ゲストの連絡先がまだ残っている古い注文 — 保持期間を過ぎたら伏せる（公開デモ向け）。 */
     List<Order> findByGuestEmailIsNotNullAndCreatedAtBefore(Instant cutoff);
 
+    /**
+     * 一度も支払われないまま終わった古い注文。これだけは<strong>行ごと</strong>消してよい。
+     *
+     * <p>売上集計は「支払い済みだけ」を数えるので、EXPIRED / CANCELLED を消しても
+     * 集計からは1円も消えない（PAID を消すと「30日より前の売上が無かったことになる」
+     * という嘘を生むので、そちらは絶対に消さない）。
+     *
+     * <p>{@link Pageable} を取るのは一度に読む件数を縛るため。放置された環境では
+     * これが数十万行になり得るので、掃除のほうがメモリを食って落ちては本末転倒。
+     */
+    Page<Order> findByStatusInAndCreatedAtBefore(List<OrderStatus> statuses, Instant cutoff, Pageable pageable);
+
     /* ---------- 集計（管理画面の売上統計） ----------
        いずれも DB 側で集約する。件数が増えても定数メモリで済むうえ、
        「全注文を読んで Java で足す」実装は本番だけ遅くなる類の問題を持ち込むため。

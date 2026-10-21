@@ -23,12 +23,26 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
      * Atomically holds stock for a pending order: only succeeds if enough is still
      * sellable ({@code stock - reserved >= qty}). DB-level guard against overselling
      * under concurrency (avoids the lost-update race in read-check-write).
-     * Returns rows affected: 1 = reserved, 0 = insufficient available stock.
+     *
+     * <p>2つめの条件は<strong>未払いの引当が在庫の一定割合を超えないこと</strong>。
+     * 引当には支払いが要らないので、これが無いと誰でも無料で棚を空にできる
+     * （公開カタログが {@code available} を正確に返すため、押さえる数も分かる）。
+     * 判定を SQL 側に置いてあるのは1つめと同じ理由で、読んでから書くまでの間に
+     * 割り込まれると上限が意味を失うため。{@code maxHoldPercent=100} なら
+     * 1つめの条件と等価になり、この層は実質無効になる。
+     *
+     * <p>支払い確定（{@link #commitStock}）は stock と reserved を同時に減らすので、
+     * 実際に売れても割合は動かない＝「売れたせいで買えない」は起きない。
+     *
+     * @return rows affected: 1 = reserved, 0 = 在庫不足 <em>または</em> 引当上限超過
+     *         （どちらだったかは呼び出し側が available を見て区別する）
      */
     @Modifying(flushAutomatically = true)
     @Query("UPDATE Product p SET p.reserved = p.reserved + :qty "
-            + "WHERE p.id = :id AND p.stock - p.reserved >= :qty")
-    int reserveStock(@Param("id") Long id, @Param("qty") int qty);
+            + "WHERE p.id = :id AND p.stock - p.reserved >= :qty "
+            + "AND (p.reserved + :qty) * 100 <= p.stock * :maxHoldPercent")
+    int reserveStock(@Param("id") Long id, @Param("qty") int qty,
+                     @Param("maxHoldPercent") int maxHoldPercent);
 
     /**
      * Converts a hold into a real decrement on payment: removes the units from both
