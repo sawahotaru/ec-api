@@ -1,5 +1,5 @@
 # ---- Build stage ----
-FROM maven:3-eclipse-temurin-26 AS build
+FROM maven:3-eclipse-temurin-27 AS build
 WORKDIR /build
 
 # Cache dependencies first
