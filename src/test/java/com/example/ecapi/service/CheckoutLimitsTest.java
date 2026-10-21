@@ -179,6 +179,21 @@ class CheckoutLimitsTest {
         assertThat(orderService.guestCheckout("b@example.com", Map.of(matcha.getId(), 5))).isNotNull();
     }
 
+    @Test
+    @DisplayName("在庫1の商品でも1点は必ず買える（割合だけで判定すると永久に買えなくなる）")
+    void anItemWithASingleUnitInStockCanStillBeBought() {
+        // 割合だけで判定すると (0+1)*100=100 <= 1*50=50 が偽になり、誰も一生注文できない。
+        // 在庫があるのに買えないのは店として壊れているので、1点ぶんの下駄を履かせてある。
+        Product lastOne = product("最後の一点", 1, TaxCategory.STANDARD, categoryRepository.findAll().getFirst());
+
+        assertThat(orderService.guestCheckout("a@example.com", Map.of(lastOne.getId(), 1))).isNotNull();
+        assertThat(reserved(lastOne)).isEqualTo(1);
+
+        // ただし下駄は1点まで。2人目は在庫切れで断られる（売り越さない）。
+        assertThatThrownBy(() -> orderService.guestCheckout("b@example.com", Map.of(lastOne.getId(), 1)))
+                .isInstanceOf(RuntimeException.class);
+    }
+
     /* ---------- helpers ---------- */
 
     private Product product(String name, int stock, TaxCategory tax, Category category) {

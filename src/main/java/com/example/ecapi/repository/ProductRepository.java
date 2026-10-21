@@ -34,13 +34,19 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
      * <p>支払い確定（{@link #commitStock}）は stock と reserved を同時に減らすので、
      * 実際に売れても割合は動かない＝「売れたせいで買えない」は起きない。
      *
+     * <p>⚠ 最後の {@code OR p.reserved + :qty <= 1} は<strong>在庫が極端に少ない商品を
+     * 買えなくしないため</strong>。割合だけで判定すると stock=1 の商品は
+     * {@code (0+1)*100=100 <= 1*50=50} が偽になり、<em>誰も一生注文できない</em>。
+     * 「1点だけは必ず押さえられる」という下駄を履かせる。上限としての意味は失われない
+     * （1点は割合に関わらずどのみち押さえられる量であり、棚を空にする力にはならない）。
+     *
      * @return rows affected: 1 = reserved, 0 = 在庫不足 <em>または</em> 引当上限超過
      *         （どちらだったかは呼び出し側が available を見て区別する）
      */
     @Modifying(flushAutomatically = true)
     @Query("UPDATE Product p SET p.reserved = p.reserved + :qty "
             + "WHERE p.id = :id AND p.stock - p.reserved >= :qty "
-            + "AND (p.reserved + :qty) * 100 <= p.stock * :maxHoldPercent")
+            + "AND ((p.reserved + :qty) * 100 <= p.stock * :maxHoldPercent OR p.reserved + :qty <= 1)")
     int reserveStock(@Param("id") Long id, @Param("qty") int qty,
                      @Param("maxHoldPercent") int maxHoldPercent);
 
