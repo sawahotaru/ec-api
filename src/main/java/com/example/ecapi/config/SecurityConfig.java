@@ -1,6 +1,7 @@
 package com.example.ecapi.config;
 
 import com.example.ecapi.security.JwtAuthenticationFilter;
+import com.example.ecapi.security.SecurityErrorResponder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -18,9 +19,12 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final SecurityErrorResponder securityErrors;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter,
+                          SecurityErrorResponder securityErrors) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.securityErrors = securityErrors;
     }
 
     @Bean
@@ -66,6 +70,12 @@ public class SecurityConfig {
                         .permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
+                // 未認証は 401・権限不足は 403 を、他のエラーと同じ形の JSON で返す。
+                // 既定のままだと認証機構を登録していない構成では**未認証にも 403・本文は空**で、
+                // 「ログインすれば入れる人」を「入れない人」として追い返すことになる。
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint(securityErrors)
+                        .accessDeniedHandler(securityErrors))
                 // allow H2 console frames in dev
                 .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

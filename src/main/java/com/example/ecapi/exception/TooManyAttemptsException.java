@@ -8,7 +8,19 @@ package com.example.ecapi.exception;
  */
 public class TooManyAttemptsException extends RuntimeException {
 
+    /** 窓が開くまでの秒数。分からない（＝時間で解けるが秒は言えない）なら 0。 */
+    private final long retryAfterSeconds;
+
     public TooManyAttemptsException(String message) {
+        this(message, 0);
+    }
+
+    public TooManyAttemptsException(String message, long retryAfterSeconds) {
         super(message);
+        this.retryAfterSeconds = retryAfterSeconds;
+    }
+
+    public long retryAfterSeconds() {
+        return retryAfterSeconds;
     }
 }
