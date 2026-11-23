@@ -109,6 +109,11 @@ public class StripePaymentProvider implements PaymentProvider {
             throw new BadRequestException("Webhook secret not configured (STRIPE_WEBHOOK_SECRET).");
         }
         String signature = headers.get("Stripe-Signature");
+        // ヘッダが無いと SDK 内部で NullPointerException になり 500 を返していた
+        // （拒否はできていたが、署名なしの雑な POST だけでスタックトレースがログに積もる）。
+        if (!StringUtils.hasText(signature)) {
+            throw new BadRequestException("Missing Stripe signature");
+        }
         Event event;
         try {
             event = Webhook.constructEvent(payload, signature, props.getWebhookSecret());
