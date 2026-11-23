@@ -11,6 +11,7 @@ import com.example.ecapi.domain.TaxRate;
 import com.example.ecapi.repository.CartItemRepository;
 import com.example.ecapi.repository.CategoryRepository;
 import com.example.ecapi.repository.CouponRepository;
+import com.example.ecapi.repository.OrderRepository;
 import com.example.ecapi.repository.ProductRepository;
 import com.example.ecapi.repository.TaxRateRepository;
 import com.example.ecapi.security.ClientKey;
@@ -59,6 +60,7 @@ class CouponOracleTest {
     @Autowired ProductRepository productRepository;
     @Autowired CategoryRepository categoryRepository;
     @Autowired CartItemRepository cartItemRepository;
+    @Autowired OrderRepository orderRepository;
     @Autowired TaxRateRepository taxRateRepository;
     @LocalServerPort int port;
 
@@ -76,6 +78,9 @@ class CouponOracleTest {
         // H2 はインメモリでもURLが同じ＝**全テストクラスで1つのDB**。他のクラスが残した
         // カート行が products の外部キーを握っていると、ここの deleteAll がそれだけで落ちる。
         cartItemRepository.deleteAll();
+        // 注文行も同じ。先に走ったクラスの注文が残っていると products を消せない
+        // （実行順はファイル配置で変わるので、手元で通っても CI で落ちる）。
+        orderRepository.deleteAll();
         productRepository.deleteAll();
         categoryRepository.deleteAll();
         taxRateRepository.deleteAll();
