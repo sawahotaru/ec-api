@@ -5,6 +5,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.hibernate.query.sqm.UnknownPathException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.core.PropertyReferenceException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -18,6 +20,19 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    /**
+     * 決済通知を復元できなかった。5xx で返して再送させる。本文は固定文、
+     * ログは種別・イベント ID・原因の型名だけ（例外の文言は出さない）。
+     */
+    @ExceptionHandler(PaymentCallbackUnreadableException.class)
+    public ResponseEntity<Map<String, Object>> handlePaymentUnreadable(
+            PaymentCallbackUnreadableException ex) {
+        log.error("PAYMENT_PAYLOAD_UNREADABLE event={} type={}", ex.eventId(), ex.causeType());
+        return build(HttpStatus.INTERNAL_SERVER_ERROR, "処理できませんでした");
+    }
 
     @ExceptionHandler(NotFoundException.class)
     public ResponseEntity<Map<String, Object>> handleNotFound(NotFoundException ex) {

@@ -57,6 +57,9 @@ public interface PaymentProvider {
      * {@link Optional#empty()} を返す。既定を空にすると、前者の Webhook URL が認証なしで
      * 200 を返す“何もしない生きたエンドポイント”として公開されてしまう。
      *
+     * <p>返す {@link PaymentCallback} には、決済側が受け取った金額・通貨・入金確定の有無を
+     * 必ず入れること。照合はコア（{@code OrderService#confirmPayment}）が行う。
+     *
      * @param payload 生のリクエストボディ（署名検証のためパース前の文字列で渡す）
      * @param headers 大文字小文字を区別しないヘッダマップ
      * @return 支払いが確定したなら対象注文を含む {@link PaymentCallback}。

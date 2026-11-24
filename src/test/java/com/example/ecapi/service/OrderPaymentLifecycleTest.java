@@ -36,6 +36,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -290,6 +292,47 @@ class OrderPaymentLifecycleTest {
         assertThat(expired).isZero();
         assertThat(status(paidOrder)).isEqualTo(OrderStatus.PAID);
         assertThat(stock(matcha)).isEqualTo(8);
+    }
+
+    // --- 支払い済み・キャンセル済みの注文への通知 -----------------------------
+
+    @ParameterizedTest
+    @EnumSource(value = OrderStatus.class, names = {"PAID", "SHIPPED", "DELIVERED"})
+    @DisplayName("支払い済み以降の注文に別セッションの入金が届いても、参照を上書きしない")
+    void paidOrderKeepsItsReferenceWhenAnotherSessionPays(OrderStatus state) {
+        addToCart(matcha, 2);
+        Order order = orderService.checkout(buyer);
+        orderService.markPaid(order.getId(), "stripe", "cs_test_a");
+        if (state != OrderStatus.PAID) {
+            orderService.updateStatus(order.getId(), state);
+        }
+
+        orderService.markPaid(order.getId(), "stripe", "cs_test_b");
+
+        Order stored = orderRepository.findById(order.getId()).orElseThrow();
+        assertThat(stored.getStatus()).isEqualTo(state);
+        assertThat(stored.getPaymentReference()).isEqualTo("cs_test_a");
+        assertThat(stock(matcha)).isEqualTo(8);
+        assertThat(reserved(matcha)).isZero();
+        assertThat(recorder.paidEvents()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("キャンセル済みの注文に入金が届いても、参照を上書きせず状態・在庫も変えない")
+    void cancelledOrderKeepsItsReferenceAndFlagsRefund() {
+        addToCart(matcha, 2);
+        Order order = orderService.checkout(buyer);
+        orderService.updateStatus(order.getId(), OrderStatus.CANCELLED);
+
+        orderService.markPaid(order.getId(), "stripe", "cs_test_late");
+
+        Order stored = orderRepository.findById(order.getId()).orElseThrow();
+        assertThat(stored.getStatus()).isEqualTo(OrderStatus.CANCELLED);
+        assertThat(stored.getPaymentReference()).isNull();
+        assertThat(stored.getPaymentProvider()).isNull();
+        assertThat(stock(matcha)).isEqualTo(10);
+        assertThat(reserved(matcha)).isZero();
+        assertThat(recorder.paidEvents()).isEmpty();
     }
 
     // --- ゲスト購入 -----------------------------------------------------------

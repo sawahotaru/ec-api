@@ -97,8 +97,8 @@ public class PaymentService {
     public void handleCallback(String providerId, String payload, Map<String, String> headers) {
         PaymentProvider provider = registry.require(providerId);
         provider.handleCallback(payload, headers)
-                .ifPresent(callback -> orderService.markPaid(
-                        callback.orderId(), provider.id(), callback.reference()));
+                .ifPresent(callback -> orderService.confirmPayment(
+                        callback, provider.id(), properties.getCurrency()));
     }
 
     /**

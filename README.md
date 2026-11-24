@@ -394,7 +394,7 @@ Swagger UI なら右上の **Authorize** にトークンを貼れば全エンド
 | `PUBLIC_BASE_URL` | 通知メールに載せる絶対リンクの基点（context-path 込み。例 `https://lab.4510.be/ec`） | （空＝直リンクの代わりに注文番号＋トークンを本文に記載） |
 | `PAYMENT_CURRENCY` | 通貨（決済手段によらない共通設定） | jpy（`STRIPE_CURRENCY` も後方互換で有効） |
 | `PAYMENT_DEFAULT_PROVIDER` | 決済手段未指定時の既定 id | stripe（無効なら有効な手段へ自動フォールバック） |
-| `STRIPE_SECRET_KEY` | Stripe テストキー `sk_test_...`（空=Stripe無効） | （空） |
+| `STRIPE_SECRET_KEY` | Stripe テストキー `sk_test_...`（空=Stripe無効。テスト用（`sk_test_`／`rk_test_`）以外のキーも無効） | （空） |
 | `STRIPE_WEBHOOK_SECRET` | Webhook 署名シークレット `whsec_...` | （空） |
 | `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL` | 決済後リダイレクト先 | `/api/payments/*` |
 | `BANK_TRANSFER_ENABLED` | 銀行振込を決済手段として有効化 | false |

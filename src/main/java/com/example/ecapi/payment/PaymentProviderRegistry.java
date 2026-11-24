@@ -58,16 +58,12 @@ public class PaymentProviderRegistry {
     public PaymentProvider require(String id) {
         String wanted = (id == null || id.isBlank()) ? defaultId() : id;
         if (wanted == null) {
-            throw new BadRequestException("No payment provider is configured. "
-                    + "Set STRIPE_SECRET_KEY, or enable app.payment.bank-transfer.enabled.");
+            throw new BadRequestException("利用できるお支払い方法がありません");
         }
+        // 応答には、利用者が送った値・有効な決済手段の一覧・設定名を入れない
         PaymentProvider provider = byId.get(wanted);
-        if (provider == null) {
-            throw new BadRequestException("Unknown payment provider '" + wanted + "'. Available: "
-                    + enabled().stream().map(PaymentProvider::id).toList());
-        }
-        if (!provider.isEnabled()) {
-            throw new BadRequestException("Payment provider '" + wanted + "' is not configured.");
+        if (provider == null || !provider.isEnabled()) {
+            throw new BadRequestException("指定されたお支払い方法は利用できません");
         }
         return provider;
     }

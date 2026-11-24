@@ -14,6 +14,8 @@ import com.example.ecapi.event.OrderPlacedEvent;
 import com.example.ecapi.exception.BadRequestException;
 import com.example.ecapi.exception.ConflictException;
 import com.example.ecapi.exception.NotFoundException;
+import com.example.ecapi.payment.MinorUnits;
+import com.example.ecapi.payment.PaymentCallback;
 import com.example.ecapi.pricing.OrderPricer;
 import com.example.ecapi.pricing.OrderPricing;
 import com.example.ecapi.pricing.PricedLine;
@@ -339,7 +341,40 @@ public class OrderService {
     }
 
     /**
-     * 決済確定。決済手段を問わずこの1本を通る（Stripe の Webhook も、銀行振込の手動確認も）。
+     * 決済側の通知を注文と照合してから確定する（Webhook の入口）。
+     * 未入金・通貨違い・金額違いは PAID にせず、warn を残して終わる（応答は 200）。
+     * 照合は注文の状態に関係なく先に行う。金額は補助単位の整数で比べる。
+     */
+    @Transactional
+    public void confirmPayment(PaymentCallback callback, String providerId, String storeCurrency) {
+        Order order = orderRepository.findById(callback.orderId()).orElse(null);
+        if (order == null) {
+            log.warn("Payment callback referenced unknown order {}", callback.orderId());
+            return;
+        }
+        Long orderId = order.getId();
+        String session = callback.reference();
+        if (!callback.paid()) {
+            log.warn("PAYMENT_NOT_PAID order={} session={}", orderId, session);
+            return;
+        }
+        long expected = MinorUnits.of(order.getTotalAmount(), storeCurrency);
+        if (callback.currency() == null
+                || !callback.currency().equalsIgnoreCase(storeCurrency)
+                || callback.amountMinor() == null
+                || expected != callback.amountMinor()) {
+            log.warn("PAYMENT_MISMATCH order={} session={} expected={} {} actual={} {}",
+                    orderId, session, expected, storeCurrency,
+                    callback.amountMinor(), callback.currency());
+            return;
+        }
+        applyPaid(order, providerId, session);
+        orderRepository.save(order);
+    }
+
+    /**
+     * 決済確定。照合済み、または人が確認した確定として扱う（金額の照合はしない）。
+     * Stripe の Webhook は {@link #confirmPayment} を通る。こちらは管理画面・銀行振込・テスト用。
      *
      * @param providerId 決済手段の id。手動確定なら null（既存の値を保つ）
      * @param reference  決済側の参照ID。無ければ null
@@ -359,15 +394,12 @@ public class OrderService {
      * PENDING ガードにより、Webhook が重複配信されても冪等。
      */
     private void applyPaid(Order order, String providerId, String reference) {
-        if (providerId != null) {
-            order.setPaymentProvider(providerId);
-        }
-        if (reference != null) {
-            order.setPaymentReference(reference);
-        }
         Long orderId = order.getId();
+        // 決済手段・参照を書き換えてよいのは、これから PAID にする注文（PENDING・EXPIRED）だけ。
+        // 支払い済み・キャンセル済みの注文では、受信値で上書きしない。
         switch (order.getStatus()) {
             case PENDING -> {
+                recordPayment(order, providerId, reference);
                 for (OrderItem item : order.getItems()) {
                     productRepository.commitStock(item.getProduct().getId(), item.getQuantity());
                 }
@@ -379,13 +411,43 @@ public class OrderService {
             case EXPIRED -> {
                 // 保留期限切れで引当を解放した後に入金が届いた。支払いは受けるが在庫はもう
                 // 触らない（再コミットすると売り越す）。手動での棚卸し調整が要る。
+                recordPayment(order, providerId, reference);
                 order.setStatus(OrderStatus.PAID);
                 log.warn("Order {} was EXPIRED when payment arrived — marked PAID WITHOUT "
                         + "stock decrement. Manual stock reconciliation may be needed.", orderId);
                 events.publishEvent(OrderPaidEvent.of(order));
             }
-            default -> log.info("Order {} already {} — ignoring duplicate payment confirmation",
+            case PAID, SHIPPED, DELIVERED -> {
+                // 参照が無い（管理画面の手動確定）か、記録と同じ（再送）なら重複として無視する。
+                // 別のセッションの入金は二重払いの可能性があるので、上書きせず要返金確認を残す。
+                if (reference != null && !reference.equals(order.getPaymentReference())) {
+                    log.warn("PAYMENT_DUPLICATE_SESSION order={} session={}", orderId, reference);
+                } else {
+                    log.info("Order {} already {} — ignoring duplicate payment confirmation",
+                            orderId, order.getStatus());
+                }
+            }
+            case CANCELLED -> {
+                // キャンセル済みの注文に入金が届いた（要返金確認）。参照は上書きしない。
+                if (reference != null) {
+                    log.warn("PAYMENT_AFTER_CLOSE order={} status={} session={}",
+                            orderId, order.getStatus(), reference);
+                } else {
+                    log.info("Order {} already {} — ignoring duplicate payment confirmation",
+                            orderId, order.getStatus());
+                }
+            }
+            default -> log.warn("Order {} has unexpected status {} when payment arrived — ignored",
                     orderId, order.getStatus());
+        }
+    }
+
+    private void recordPayment(Order order, String providerId, String reference) {
+        if (providerId != null) {
+            order.setPaymentProvider(providerId);
+        }
+        if (reference != null) {
+            order.setPaymentReference(reference);
         }
     }
 

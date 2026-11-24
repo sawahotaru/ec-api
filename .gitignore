@@ -16,7 +16,8 @@ target/
 Thumbs.db
 
 # Local env
-.env
+.env*
+!.env.example
 
 # 管理画面から上げた商品画像（app.uploads.dir の既定）。実データなのでコミットしない
 data/
