@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.example.ecapi.config.StripeProperties;
+import com.example.ecapi.domain.AppSetting;
 import com.example.ecapi.domain.Category;
 import com.example.ecapi.domain.Coupon;
 import com.example.ecapi.domain.DiscountType;
@@ -15,6 +16,7 @@ import com.example.ecapi.domain.TaxRate;
 import com.example.ecapi.exception.BadRequestException;
 import com.example.ecapi.payment.MinorUnits;
 import com.example.ecapi.payment.PaymentProperties;
+import com.example.ecapi.repository.AppSettingRepository;
 import com.example.ecapi.repository.CategoryRepository;
 import com.example.ecapi.repository.CouponRepository;
 import com.example.ecapi.repository.OrderRepository;
@@ -27,6 +29,7 @@ import com.stripe.param.checkout.SessionCreateParams;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,10 +64,12 @@ class StripeAmountMatchesOrderTotalTest {
     @Autowired CouponRepository couponRepository;
     @Autowired SettingService settingService;
     @Autowired ShippingSettings shippingSettings;
+    @Autowired AppSettingRepository appSettingRepository;
 
-    private PricingMode savedMode;
-    private BigDecimal savedFee;
-    private BigDecimal savedFreeThreshold;
+    /** 設定の行ごとの元の値（元から無かった行は null）。後片付けで行単位に戻す。 */
+    private static final List<String> SETTING_KEYS =
+            List.of("tax.pricing-mode", "shipping.fee", "shipping.free-threshold");
+    private final Map<String, String> savedRows = new HashMap<>();
 
     private final List<Long> orderIds = new ArrayList<>();
     private final List<Long> couponIds = new ArrayList<>();
@@ -79,9 +84,10 @@ class StripeAmountMatchesOrderTotalTest {
 
     @BeforeEach
     void setUp() {
-        savedMode = settingService.getPricingMode();
-        savedFee = shippingSettings.fee();
-        savedFreeThreshold = shippingSettings.freeThreshold();
+        savedRows.clear();
+        for (String key : SETTING_KEYS) {
+            savedRows.put(key, appSettingRepository.findById(key).map(AppSetting::getValue).orElse(null));
+        }
         shippingSettings.setFreeThreshold(BigDecimal.ZERO);
 
         // 他クラスの残した税率より後の適用開始日にして、こちらが必ず選ばれるようにする
@@ -109,9 +115,14 @@ class StripeAmountMatchesOrderTotalTest {
         categoryRepository.deleteById(category.getId());
         taxRateIds.forEach(taxRateRepository::deleteById);
 
-        settingService.setPricingMode(savedMode);
-        shippingSettings.setFee(savedFee);
-        shippingSettings.setFreeThreshold(savedFreeThreshold);
+        // 元から無かった行を、このコンテキストの既定値で作ってしまわないよう、行ごとに戻す
+        savedRows.forEach((key, value) -> {
+            if (value != null) {
+                appSettingRepository.save(new AppSetting(key, value));
+            } else if (appSettingRepository.existsById(key)) {
+                appSettingRepository.deleteById(key);
+            }
+        });
     }
 
     static Stream<Arguments> combinations() {
