@@ -41,6 +41,9 @@ public class StripePaymentProvider implements PaymentProvider {
 
     private static final Logger log = LoggerFactory.getLogger(StripePaymentProvider.class);
 
+    /** 決済側がメール欄に受け付ける長さの上限。超える値は渡さない。 */
+    static final int MAX_CUSTOMER_EMAIL_LENGTH = 800;
+
     /** 支払い開始に失敗したときの固定文（設定の不足・Stripe のエラーを外に区別させない）。 */
     static final String START_FAILED = "決済を開始できませんでした。時間をおいてお試しください。";
     /** Webhook の要求を受け付けなかったときの固定文（署名の無し・不正を区別させない）。 */
@@ -128,10 +131,17 @@ public class StripePaymentProvider implements PaymentProvider {
 
         SessionCreateParams.Builder builder = SessionCreateParams.builder()
                 .setMode(SessionCreateParams.Mode.PAYMENT)
-                .setSuccessUrl(props.getSuccessUrl() + "?orderId=" + order.getId())
-                .setCancelUrl(props.getCancelUrl() + "?orderId=" + order.getId())
+                .setSuccessUrl(withOrderId(props.getSuccessUrl(), order.getId()))
+                .setCancelUrl(withOrderId(props.getCancelUrl(), order.getId()))
                 .setClientReferenceId(order.getId().toString())
                 .putMetadata("orderId", order.getId().toString());
+
+        // 決済ページのメール欄に、注文のメールを入れて開く。空・決済側の上限（800 文字）超は渡さない。
+        // 説明欄・ログにはメールを入れない。
+        String email = order.getContactEmail();
+        if (email != null && !email.isBlank() && email.length() <= MAX_CUSTOMER_EMAIL_LENGTH) {
+            builder.setCustomerEmail(email);
+        }
 
         builder.addLineItem(SessionCreateParams.LineItem.builder()
                 .setQuantity(1L)
@@ -145,6 +155,14 @@ public class StripePaymentProvider implements PaymentProvider {
                         .build())
                 .build());
         return builder.build();
+    }
+
+    /**
+     * 戻り先の URL に注文 ID を足す。設定値に既にクエリ（{@code ?}）があれば {@code &orderId=}、
+     * 無ければ {@code ?orderId=} を足す（旧い設定値でも新しい設定値でも正しい URL になる）。
+     */
+    static String withOrderId(String url, Long orderId) {
+        return url + (url.contains("?") ? "&" : "?") + "orderId=" + orderId;
     }
 
     /** 品目の説明欄。商品名と数量だけ（メールアドレス・トークンは入れない）。 */

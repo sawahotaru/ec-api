@@ -82,7 +82,10 @@ public final class OrderDtos {
             Instant createdAt,
             // Only present in the response to a guest checkout — the token the guest uses
             // to view or pay the order later. Null for logged-in orders and list views.
-            String orderToken) {
+            String orderToken,
+            // 支払いの期限（取り置きの期限）。PENDING の注文だけ値を持つ。注文の応答に載せるときは
+            // withPayBy で足す（管理画面の応答などでは null のまま）。
+            Instant payBy) {
 
         public static OrderResponse from(Order order) {
             return build(order, false);
@@ -98,7 +101,14 @@ public final class OrderDtos {
         public OrderResponse masked() {
             return new OrderResponse(id, ContactMask.mask(userEmail), guest, status,
                     subtotalAmount, discountAmount, shippingAmount, taxAmount, totalAmount,
-                    couponCode, pricingMode, items, createdAt, orderToken);
+                    couponCode, pricingMode, items, createdAt, orderToken, payBy);
+        }
+
+        /** 支払い期限を足した複製。 */
+        public OrderResponse withPayBy(Instant deadline) {
+            return new OrderResponse(id, userEmail, guest, status,
+                    subtotalAmount, discountAmount, shippingAmount, taxAmount, totalAmount,
+                    couponCode, pricingMode, items, createdAt, orderToken, deadline);
         }
 
         /** Includes the one-time orderToken — use only in the immediate guest-checkout reply. */
@@ -125,7 +135,8 @@ public final class OrderDtos {
                     order.getPricingMode().name(),
                     items,
                     order.getCreatedAt(),
-                    includeToken ? order.getOrderToken() : null);
+                    includeToken ? order.getOrderToken() : null,
+                    null);
         }
     }
 

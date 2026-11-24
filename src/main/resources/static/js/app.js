@@ -57,6 +57,12 @@ const state = {
     quote: null,
     // ログインの二段階目で使う引換券。これでは何のAPIも叩けない（サーバー側で用途を判定）。
     mfaToken: null,
+    // お支払い待ちの注文の控え { at, list, complete }（60 秒だけ使う）。
+    pending: null,
+    // 成功から戻った直後で、確定の通知を待っている注文 ID（「お支払い待ち」に数えない）。
+    pendingExcludeId: null,
+    // その注文の、最後に確かめた状態。
+    excludedStatus: null,
 };
 
 // Suffix shown after prices, e.g. 「（税込）」. Prices in the catalog are tax-included
@@ -115,7 +121,9 @@ async function api(path, { method = "GET", body, auth = false } = {}) {
     const data = text ? JSON.parse(text) : null;
     if (!res.ok) {
         const msg = (data && data.message) || `${res.status} ${res.statusText}`;
-        throw new Error(msg);
+        const err = new Error(msg);
+        err.status = res.status;
+        throw err;
     }
     return data;
 }
@@ -1051,7 +1059,7 @@ async function afterTaxChange(msg) {
    Without this screen the orderToken was shown once in the checkout banner and then
    effectively lost, so a guest could never come back to check or pay an order. */
 
-async function showGuestOrders(id, token) {
+async function showGuestOrders(id, token, done = false) {
     hideViews();
     const box = $("#guestOrders");
     box.classList.remove("hidden");
@@ -1063,7 +1071,7 @@ async function showGuestOrders(id, token) {
     res.innerHTML = '<p class="empty">照会中…</p>';
     try {
         const order = await api(`/api/orders/guest/${id}?token=${encodeURIComponent(token)}`);
-        res.innerHTML = guestOrderCardHtml(order, token);
+        res.innerHTML = guestOrderCardHtml(order, token, done || order.id === state.pendingExcludeId);
     } catch {
         // The API answers 404 for both "no such order" and "wrong token", so a single
         // message is honest here and does not reveal which order ids exist.
@@ -1126,12 +1134,18 @@ function guestLookupShellHtml(id, token) {
         <div id="lookupResult"></div>`;
 }
 
-function guestOrderCardHtml(order, token) {
+function guestOrderCardHtml(order, token, done = false) {
     const when = new Date(order.createdAt).toLocaleString("ja-JP");
     const lines = order.items.map((i) =>
         `<div class="lmeta">${escapeHtml(i.productName)} × ${i.quantity} — ${yen(i.lineTotal)}</div>`).join("");
     // The lookup response never carries the token back, so reuse the one we came in with.
-    const pay = order.status === "PENDING" ? payButtonsHtml(order.id, token) : "";
+    // 支払い完了から戻った直後は、確定の通知が届くまで支払いボタンを出さない（二重払いを誘わない）。
+    const confirming = done && order.status === "PENDING";
+    const pay = order.status === "PENDING"
+        ? (confirming
+            ? '<p class="hint" style="text-align:left">決済の確認を待っています。少し待ってから再読み込みしてください。</p>'
+            : pendingNoticeHtml(order) + payButtonsHtml(order.id, token))
+        : "";
     const note = order.status === "EXPIRED"
         ? '<p class="hint" style="text-align:left">お支払い期限が過ぎたため、確保していた在庫は解放されました。お手数ですが再度ご注文ください。</p>'
         : "";
@@ -1230,6 +1244,7 @@ async function completeLogin(res) {
     localStorage.setItem("ec_token", res.token);
     closeAuth();
     reflectAuth();
+    updatePendingFlag({ force: true });
     await mergeGuestCartIfAny();
     await refreshCart();
     toast(`ようこそ、${res.user.name} さん`);
@@ -1278,6 +1293,7 @@ function logout() {
     localStorage.removeItem("ec_token");
     state.guestMode = "choice"; // back to the guest method choice
     reflectAuth();
+    updatePendingFlag({ force: true });
     updateCartCount(guestCartView()); // fall back to the guest cart badge
     closeDrawers();
     if (currentRoute().name === "admin") location.hash = "#/"; // leave the admin view
@@ -1531,6 +1547,7 @@ async function applyCoupon() {
 
 async function checkout() {
     if (!isLoggedIn()) { return guestCheckout(); }
+    if (!(await confirmNewOrder())) return;
     try {
         const order = await api("/api/orders/checkout", {
             method: "POST", auth: true, body: { couponCode: state.couponCode || null },
@@ -1540,6 +1557,8 @@ async function checkout() {
         await refreshCart();
         closeDrawers();
         showOrderResult(order);
+        state.pending = null;
+        updatePendingFlag({ force: true });
     } catch (ex) { toast(ex.message); }
 }
 
@@ -1548,6 +1567,7 @@ async function guestCheckout() {
     if (!email) { toast("メールアドレスを入力してください"); $("#guestEmail").focus(); return; }
     const items = guestCart().map((i) => ({ productId: i.productId, quantity: i.quantity }));
     if (items.length === 0) { toast("カートが空です"); return; }
+    if (!(await confirmNewOrder())) return;
     try {
         const order = await api("/api/orders/guest-checkout", {
             method: "POST", body: { email, items, couponCode: state.couponCode || null },
@@ -1560,27 +1580,33 @@ async function guestCheckout() {
         await refreshCart();
         closeDrawers();
         showOrderResult(order);
+        state.pending = null;
+        updatePendingFlag({ force: true });
         loadProducts(); // reflect the newly reserved stock in the grid
     } catch (ex) { toast(ex.message); }
 }
 
 /* ---------- orders ---------- */
-async function openOrders() {
+async function openOrders(doneId = null) {
     if (!isLoggedIn()) { openAuth(); return; }
     try {
         const page = await api("/api/orders?size=20&sort=createdAt,desc", { auth: true });
-        renderOrders(page.content || []);
+        renderOrders(page.content || [], doneId ?? state.pendingExcludeId);
         openDrawer("#ordersDrawer");
     } catch (ex) { toast(ex.message); }
 }
 
-function renderOrders(orders) {
+function renderOrders(orders, doneId = null) {
     const box = $("#ordersBody");
     if (orders.length === 0) { box.innerHTML = '<p class="empty">注文はまだありません。</p>'; return; }
     box.innerHTML = orders.map((o) => {
         const when = new Date(o.createdAt).toLocaleString("ja-JP");
         const lines = o.items.map((i) => `<div class="lmeta">${escapeHtml(i.productName)} × ${i.quantity} — ${yen(i.lineTotal)}</div>`).join("");
-        const payBtn = o.status === "PENDING" ? payButtonsHtml(o.id, null) : "";
+        const payBtn = o.status === "PENDING"
+            ? (o.id === doneId
+                ? '<p class="hint" style="text-align:left">決済の確認を待っています。</p>'
+                : pendingNoticeHtml(o) + payButtonsHtml(o.id, null))
+            : "";
         return `
         <div class="order-block">
             <div class="oh">
@@ -1615,7 +1641,11 @@ function taxBreakdownHtml(order) {
 
 function showOrderResult(order) {
     const banner = $("#banner");
-    let html = `✅ 注文 #${order.id} を受け付けました（状態 ${escapeHtml(statusLabel(order.status))}）。`;
+    const unpaid = state.paymentsEnabled && order.status === "PENDING";
+    let html = unpaid
+        ? `✅ 注文 #${order.id} を受け付けました。`
+        : `✅ 注文 #${order.id} を受け付けました（状態 ${escapeHtml(statusLabel(order.status))}）。`;
+    if (unpaid) html += pendingNoticeHtml(order);
     html += taxBreakdownHtml(order);
     if (order.guest && order.orderToken) {
         // The token is shown once here, but it is also stored on this browser and the
@@ -1647,6 +1677,136 @@ function payButtonsHtml(orderId, token) {
     ).join("");
 }
 
+/* ---------- お支払い待ちの案内 ---------- */
+const PENDING_CACHE_MS = 60 * 1000;
+const GUEST_RECORD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const GUEST_LOOKUP_MAX = 5;
+const CONFIRMING_KEY = "ec_payment_confirming";
+
+function formatPayBy(iso) {
+    const d = new Date(iso);
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours()}時${String(d.getMinutes()).padStart(2, "0")}分`;
+}
+
+// 「まだ払っていない」「いつまで」「どの方法で払えるか」を一目で分かるようにする。
+function pendingNoticeHtml(order) {
+    const until = order.payBy ? `・${escapeHtml(formatPayBy(order.payBy))}まで` : "";
+    const names = state.paymentsEnabled && state.paymentProviders.length
+        ? `<br>お支払い方法: ${state.paymentProviders.map((p) => escapeHtml(p.displayName)).join("、")}` : "";
+    return `<p class="hint pending-note" style="text-align:left"><strong>お支払いはまだ済んでいません</strong>${until}（過ぎると自動で取り消されます）${names}</p>`;
+}
+
+// 成功から戻った注文の除外を、sessionStorage から読み直す（過ぎていれば消す）。
+function loadPaymentConfirming() {
+    let raw = null;
+    try { raw = sessionStorage.getItem(CONFIRMING_KEY); } catch { return; }
+    if (!raw) return;   // 無ければ state の値（直前に戻りで入れたもの）をそのまま使う
+    try {
+        const e = JSON.parse(raw);
+        if (e && Number.isFinite(e.id) && Number(e.until) > Date.now()) { state.pendingExcludeId = e.id; return; }
+    } catch { /* 壊れた値は消す */ }
+    clearPaymentConfirming();
+}
+function clearPaymentConfirming() {
+    try { sessionStorage.removeItem(CONFIRMING_KEY); } catch { /* ignore */ }
+    state.pendingExcludeId = null;
+    state.excludedStatus = null;
+}
+
+function markGuestOrder(id, patch) {
+    saveGuestOrderLog(guestOrderLog().map((o) => (o.id === id ? { ...o, ...patch } : o)));
+}
+
+function noteOrderStatus(id, status) {
+    if (id !== state.pendingExcludeId) return;
+    if (status === "PAID") clearPaymentConfirming();
+    else state.excludedStatus = status;
+}
+
+/* お支払い待ち（PENDING）の注文を探す。会員はサーバーの一覧 1 本、ゲストは端末の記録を新しい順に
+   1 件ずつ最大 5 本（GET だけ）。firstOnly のときは、確認中の注文を除く PENDING が 1 件見つかった時点で止める。
+   60 秒は控えを返す（止めた結果は「完全でない」ので firstOnly の呼び出しにだけ使う）。失敗しても空の一覧。 */
+async function findPendingOrders({ force = false, firstOnly = false } = {}) {
+    const c = state.pending;
+    if (!force && c && Date.now() - c.at < PENDING_CACHE_MS && (c.complete || firstOnly)) return c.list;
+    const list = [];
+    let complete = true;
+    try {
+        if (isLoggedIn()) {
+            const page = await api("/api/orders?size=20&sort=createdAt,desc", { auth: true });
+            for (const o of page.content || []) {
+                noteOrderStatus(o.id, o.status);
+                if (o.status === "PENDING") list.push({ id: o.id, totalAmount: o.totalAmount, payBy: o.payBy, token: null });
+            }
+        } else {
+            const now = Date.now();
+            const records = guestOrderLog()
+                .filter((o) => !o.gone && !o.settled && o.at && now - new Date(o.at).getTime() <= GUEST_RECORD_MAX_AGE_MS)
+                .slice(0, GUEST_LOOKUP_MAX);
+            for (const rec of records) {
+                try {
+                    const o = await api(`/api/orders/guest/${rec.id}?token=${encodeURIComponent(rec.token)}`);
+                    noteOrderStatus(o.id, o.status);
+                    if (o.status === "PENDING") {
+                        list.push({ id: o.id, totalAmount: o.totalAmount, payBy: o.payBy, token: rec.token });
+                        if (firstOnly && o.id !== state.pendingExcludeId) { complete = false; break; }
+                    } else {
+                        markGuestOrder(rec.id, { settled: true });
+                    }
+                } catch (ex) {
+                    if (ex && ex.status === 404) markGuestOrder(rec.id, { gone: true });
+                }
+            }
+        }
+    } catch { /* 画面は止めない。空の一覧 */ }
+    state.pending = { at: Date.now(), list, complete };
+    return list;
+}
+
+function pendingExceptExcluded(list) {
+    return list.filter((o) => o.id !== state.pendingExcludeId);
+}
+
+// ヘッダーの「お支払い待ちあり」（出しっぱなし・件数なし）。確認中の注文は別に「お支払いを確認中」。
+async function updatePendingFlag({ force = false } = {}) {
+    const flag = $("#pendingFlag");
+    if (!flag) return;
+    loadPaymentConfirming();
+    const list = await findPendingOrders({ force, firstOnly: true });
+    if (pendingExceptExcluded(list).length > 0) {
+        flag.textContent = "お支払い待ちあり";
+        flag.classList.remove("hidden");
+    } else if (state.pendingExcludeId != null && state.excludedStatus === "PENDING") {
+        flag.textContent = "お支払いを確認中";
+        flag.classList.remove("hidden");
+    } else {
+        flag.classList.add("hidden");
+    }
+}
+
+// カートを開いたときの案内（先頭に、期限と支払いボタン）。確認中の注文は除く。
+async function updateCartPending() {
+    const box = $("#cartPending");
+    if (!box) return;
+    const others = pendingExceptExcluded(await findPendingOrders());
+    if (others.length === 0) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+    box.innerHTML = others.map((o) => `
+        <div class="hint pending-note" style="text-align:left">
+            <strong>お支払いがまだのご注文があります</strong>（#${o.id}${o.payBy ? "・" + escapeHtml(formatPayBy(o.payBy)) + "まで" : ""}）
+            ${payButtonsHtml(o.id, o.token)}
+        </div>`).join("");
+    box.classList.remove("hidden");
+}
+
+// 新しく注文する前に、お支払い待ちがあれば確認する。調べられなければ確認せず進む。
+async function confirmNewOrder() {
+    try {
+        const others = pendingExceptExcluded(await findPendingOrders());
+        if (others.length === 0) return true;
+        return window.confirm(`お支払い待ちのご注文 #${others[0].id} があります。\nお支払い待ちのご注文は、期限を過ぎると自動で取り消されます。\n新しく注文しますか？`);
+    } catch { return true; }
+}
+
 // token present → guest order (public endpoint); absent → the logged-in user's order.
 async function startPayment(orderId, token, providerId) {
     try {
@@ -1658,8 +1818,64 @@ async function startPayment(orderId, token, providerId) {
             ? `${base}${base.includes("?") ? "&" : "?"}provider=${encodeURIComponent(providerId)}`
             : base;
         const res = await api(path, { method: "POST", auth: !token });
+        state.pending = null;   // 支払いを始めたので、控えを捨てる
         window.location.href = res.redirectUrl;
     } catch (ex) { toast(ex.message); }
+}
+
+/* ---------- 決済から戻ったとき ----------
+   戻り先は <BASE>/?payment=success|cancel&orderId=<id>。読んだらすぐ URL から消す
+   （再読み込みで同じ案内を繰り返さない・注文番号を URL に残さない）。 */
+function takePaymentReturn() {
+    const q = new URLSearchParams(location.search);
+    if (!q.has("payment")) return null;
+    const kind = q.get("payment");
+    const rawId = q.get("orderId");
+    history.replaceState(null, "", location.pathname + location.hash);
+    if (kind !== "success" && kind !== "cancel") return null;
+    // 数字だけ（15 桁まで）のときだけ使う。それ以外は画面にも出さない。
+    const id = rawId !== null && /^[1-9][0-9]{0,14}$/.test(rawId) ? Number(rawId) : null;
+    return { kind, id };
+}
+
+async function showPaymentReturn(kind, id) {
+    const who = id != null ? `ご注文 #${id}` : "";
+    const banner = $("#banner");
+    banner.innerHTML = kind === "success"
+        ? `<strong>お支払いの手続きが完了しました。</strong>${id != null ? escapeHtml(who) + " は、" : ""}決済の確認が届きしだい「${escapeHtml(statusLabel("PAID"))}」に変わります。変わるまで少し時間がかかることがあります。`
+        : `<strong>お支払いは完了していません。</strong>${id != null ? escapeHtml(who) + " は" : "ご注文は"}「${escapeHtml(statusLabel("PENDING"))}」のままです。期限までは、ご注文の画面からもう一度お支払いいただけます。`;
+    banner.classList.remove("hidden");
+
+    const done = kind === "success" && id != null;
+    if (done) {
+        // 確定の通知が届くまでは「お支払い待ち」に数えない（10 分）。
+        try {
+            sessionStorage.setItem("ec_payment_confirming", JSON.stringify({ id, until: Date.now() + 10 * 60 * 1000 }));
+        } catch { /* 保存できなくても案内は出す */ }
+        state.pendingExcludeId = id;
+    }
+    if (kind === "cancel" && id != null) {
+        // 成功から同じ注文でキャンセルに戻ったときは、確認中の印を外す（実際は未払い）。
+        let saved = null;
+        try { saved = JSON.parse(sessionStorage.getItem("ec_payment_confirming")); } catch { /* ignore */ }
+        if ((saved && saved.id === id) || state.pendingExcludeId === id) {
+            clearPaymentConfirming();
+            state.pending = null;   // ヘッダーを判定し直す
+        }
+    }
+    if (id == null) return;
+
+    if (isLoggedIn()) {
+        await openOrders(done ? id : null);
+        return;
+    }
+    const hit = guestOrderLog().find((o) => o.id === id);
+    if (hit) {
+        await showGuestOrders(id, hit.token, done);
+    } else {
+        await showGuestOrders(id, null, done);
+        banner.insertAdjacentHTML("beforeend", "<br>この端末にはご注文の記録がありません。照会用トークンを入力してください。");
+    }
 }
 
 /* ---------- drawers ---------- */
@@ -1686,10 +1902,23 @@ function bind() {
 
     $("#cartBtn").addEventListener("click", async () => {
         await refreshCart(); // works for guests (localStorage) and logged-in users alike
+        try { await updateCartPending(); } catch { /* 案内が出ないだけ */ }
         openDrawer("#cartDrawer");
     });
-    $("#ordersBtn").addEventListener("click", openOrders);
+    $("#ordersBtn").addEventListener("click", () => openOrders());
     $("#guestOrdersBtn").addEventListener("click", () => { closeDrawers(); location.hash = "#/orders/guest"; });
+    $("#pendingFlag").addEventListener("click", () => {
+        if (isLoggedIn()) { openOrders(); return; }
+        closeDrawers();
+        if (location.hash === "#/orders/guest") route(); else location.hash = "#/orders/guest";
+    });
+    // ブラウザの戻る操作でメモリから復元されたときは init が走らないので、ここで確かめ直す。
+    window.addEventListener("pageshow", (e) => {
+        if (!e.persisted) return;
+        state.pending = null;
+        updatePendingFlag({ force: true });
+        refreshCart().catch(() => {});
+    });
     $("#adminBtn").addEventListener("click", () => { location.hash = "#/admin"; });
     $("#checkoutBtn").addEventListener("click", checkout);
     $("#couponApplyBtn").addEventListener("click", applyCoupon);
@@ -1747,6 +1976,7 @@ function bind() {
             if (kind === "open-guest-order") { openSavedGuestOrder(Number(act.dataset.id)); return; }
             if (kind === "forget-guest-order") {
                 forgetGuestOrder(Number(act.dataset.id));
+                updatePendingFlag({ force: true });
                 route();                       // repaint the list without this entry
                 toast("記録を削除しました");
                 return;
@@ -1754,6 +1984,7 @@ function bind() {
             if (kind === "forget-all-guest-orders") {
                 if (!window.confirm("この端末に記録された注文をすべて削除しますか？\n（注文自体は取り消されません。トークンを控えていないと再照会できなくなります）")) return;
                 saveGuestOrderLog([]);
+                updatePendingFlag({ force: true });
                 // Leave a deep link if we were on one; repaint in place otherwise.
                 if (location.hash === "#/orders/guest") route(); else location.hash = "#/orders/guest";
                 toast("記録を削除しました");
@@ -1795,6 +2026,7 @@ function bind() {
 }
 
 async function init() {
+    const paymentReturn = takePaymentReturn();
     bind();
     setAuthTab("login");
     try {
@@ -1821,6 +2053,8 @@ async function init() {
     reflectAuth();
     window.addEventListener("hashchange", route);
     await route(); // honor a deep link like #/product/3 on first load
+    if (paymentReturn) await showPaymentReturn(paymentReturn.kind, paymentReturn.id);
+    await updatePendingFlag();
 }
 
 init();

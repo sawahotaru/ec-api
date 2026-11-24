@@ -154,8 +154,8 @@ app:
     # Set sk_test_... and whsec_... in production env (never commit real keys).
     secret-key: ${STRIPE_SECRET_KEY:}
     webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
-    success-url: ${STRIPE_SUCCESS_URL:http://localhost:8502/api/payments/success}
-    cancel-url: ${STRIPE_CANCEL_URL:http://localhost:8502/api/payments/cancel}
+    success-url: ${STRIPE_SUCCESS_URL:http://localhost:8502/?payment=success}
+    cancel-url: ${STRIPE_CANCEL_URL:http://localhost:8502/?payment=cancel}
   notify:
     mail:
       # 注文イベント → メール通知プラグイン。既定は無効（デモ環境で誤送信しないため）。

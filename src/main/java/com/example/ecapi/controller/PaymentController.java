@@ -7,10 +7,14 @@ import com.example.ecapi.service.PaymentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
+import java.net.URI;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,12 +30,18 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/payments")
 public class PaymentController {
 
+    /** 戻り先の注文番号。先頭が 0 でない数字 1〜18 桁だけを有効とする。 */
+    private static final Pattern ORDER_ID_PATTERN = Pattern.compile("^[1-9][0-9]{0,17}$");
+
     private final PaymentService paymentService;
     private final CurrentUserProvider currentUserProvider;
+    private final String contextPath;
 
-    public PaymentController(PaymentService paymentService, CurrentUserProvider currentUserProvider) {
+    public PaymentController(PaymentService paymentService, CurrentUserProvider currentUserProvider,
+                             @Value("${server.servlet.context-path:}") String contextPath) {
         this.paymentService = paymentService;
         this.currentUserProvider = currentUserProvider;
+        this.contextPath = contextPath;
     }
 
     @Operation(summary = "利用できる決済手段の一覧（公開）")
@@ -81,17 +91,28 @@ public class PaymentController {
                 token == null || token.isBlank() ? currentUserProvider.require() : null);
     }
 
-    @Operation(summary = "支払い成功後の着地ページ（公開）")
-    @GetMapping(value = "/success", produces = MediaType.TEXT_HTML_VALUE)
-    public String success() {
-        return "<h1>Payment successful ✅</h1><p>Your test payment was received. "
-                + "The order is marked PAID once the provider delivers its callback.</p>";
+    @Operation(summary = "旧い戻り先（ストアへ転送）")
+    @GetMapping("/success")
+    public ResponseEntity<Void> success(@RequestParam(required = false) String orderId) {
+        return returnToStore("success", orderId);
     }
 
-    @Operation(summary = "支払いキャンセル後の着地ページ（公開）")
-    @GetMapping(value = "/cancel", produces = MediaType.TEXT_HTML_VALUE)
-    public String cancel() {
-        return "<h1>Payment cancelled</h1><p>Your order is still PENDING. You can try paying again.</p>";
+    @Operation(summary = "旧い戻り先（ストアへ転送）")
+    @GetMapping("/cancel")
+    public ResponseEntity<Void> cancel(@RequestParam(required = false) String orderId) {
+        return returnToStore("cancel", orderId);
+    }
+
+    /**
+     * 旧い戻り先から、ストアのトップへ 302 で転送する。本文は返さず、DB は読まない。
+     * 注文番号は数字だけ（18 桁まで）のときに限って付け、それ以外は使わない・反射しない。
+     */
+    private ResponseEntity<Void> returnToStore(String kind, String orderId) {
+        String target = contextPath + "/?payment=" + kind;
+        if (orderId != null && ORDER_ID_PATTERN.matcher(orderId).matches()) {
+            target += "&orderId=" + orderId;
+        }
+        return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(target)).build();
     }
 
     /**

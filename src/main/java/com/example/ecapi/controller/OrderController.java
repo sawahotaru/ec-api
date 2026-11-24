@@ -1,5 +1,6 @@
 package com.example.ecapi.controller;
 
+import com.example.ecapi.domain.Order;
 import com.example.ecapi.domain.User;
 import com.example.ecapi.dto.OrderDtos.CheckoutRequest;
 import com.example.ecapi.dto.OrderDtos.GuestCheckoutLine;
@@ -8,6 +9,7 @@ import com.example.ecapi.dto.OrderDtos.OrderResponse;
 import com.example.ecapi.exception.BadRequestException;
 import com.example.ecapi.security.CurrentUserProvider;
 import com.example.ecapi.service.OrderService;
+import com.example.ecapi.service.PaymentDeadlines;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -33,10 +35,18 @@ public class OrderController {
 
     private final OrderService orderService;
     private final CurrentUserProvider currentUserProvider;
+    private final PaymentDeadlines deadlines;
 
-    public OrderController(OrderService orderService, CurrentUserProvider currentUserProvider) {
+    public OrderController(OrderService orderService, CurrentUserProvider currentUserProvider,
+                           PaymentDeadlines deadlines) {
         this.orderService = orderService;
         this.currentUserProvider = currentUserProvider;
+        this.deadlines = deadlines;
+    }
+
+    /** 注文の応答に支払い期限（PENDING のときだけ値あり）を足す。 */
+    private OrderResponse withDeadline(Order order, OrderResponse response) {
+        return response.withPayBy(deadlines.payBy(order));
     }
 
     @Operation(summary = "Check out: turn the cart into an order",
@@ -45,7 +55,8 @@ public class OrderController {
     public ResponseEntity<OrderResponse> checkout(@RequestBody(required = false) CheckoutRequest request) {
         User user = currentUserProvider.require();
         String couponCode = request != null ? request.couponCode() : null;
-        OrderResponse response = OrderResponse.from(orderService.checkout(user, couponCode));
+        Order order = orderService.checkout(user, couponCode);
+        OrderResponse response = withDeadline(order, OrderResponse.from(order));
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
@@ -61,8 +72,8 @@ public class OrderController {
                 throw new BadRequestException("Quantity must be at least 1 for product " + line.productId());
             }
         }
-        OrderResponse response = OrderResponse.fromWithToken(
-                orderService.guestCheckout(request.email(), quantities, request.couponCode()));
+        Order order = orderService.guestCheckout(request.email(), quantities, request.couponCode());
+        OrderResponse response = withDeadline(order, OrderResponse.fromWithToken(order));
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
@@ -70,18 +81,20 @@ public class OrderController {
     @GetMapping("/guest/{id}")
     public ResponseEntity<OrderResponse> getGuestOrder(@PathVariable Long id,
                                                        @RequestParam String token) {
-        return ResponseEntity.ok(OrderResponse.from(orderService.getGuestOrder(id, token)));
+        Order order = orderService.getGuestOrder(id, token);
+        return ResponseEntity.ok(withDeadline(order, OrderResponse.from(order)));
     }
 
     @Operation(summary = "List my orders (paginated)")
     @GetMapping
     public Page<OrderResponse> myOrders(@PageableDefault(size = 10, sort = "createdAt") Pageable pageable) {
-        return orderService.findMyOrders(currentUserProvider.require(), pageable).map(OrderResponse::from);
+        return orderService.findMyOrders(currentUserProvider.require(), pageable).map(o -> withDeadline(o, OrderResponse.from(o)));
     }
 
     @Operation(summary = "Get one of my orders by id")
     @GetMapping("/{id}")
     public ResponseEntity<OrderResponse> getMyOrder(@PathVariable Long id) {
-        return ResponseEntity.ok(OrderResponse.from(orderService.getMyOrder(currentUserProvider.require(), id)));
+        Order order = orderService.getMyOrder(currentUserProvider.require(), id);
+        return ResponseEntity.ok(withDeadline(order, OrderResponse.from(order)));
     }
 }

@@ -396,7 +396,7 @@ Swagger UI なら右上の **Authorize** にトークンを貼れば全エンド
 | `PAYMENT_DEFAULT_PROVIDER` | 決済手段未指定時の既定 id | stripe（無効なら有効な手段へ自動フォールバック） |
 | `STRIPE_SECRET_KEY` | Stripe テストキー `sk_test_...`（空=Stripe無効。テスト用（`sk_test_`／`rk_test_`）以外のキーも無効） | （空） |
 | `STRIPE_WEBHOOK_SECRET` | Webhook 署名シークレット `whsec_...` | （空） |
-| `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL` | 決済後リダイレクト先 | `/api/payments/*` |
+| `STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL` | 決済後に戻るストアの URL | 例 `https://<ホスト>/ec/?payment=success` |
 | `BANK_TRANSFER_ENABLED` | 銀行振込を決済手段として有効化 | false |
 | `BANK_TRANSFER_ACCOUNT` / `BANK_TRANSFER_NOTE_DAYS` | 案内ページに出す振込先・入金確認目安 | サンプル値 / 3 |
 | `NOTIFY_MAIL_ENABLED` | 注文イベントのメール通知を有効化（別途 `spring.mail.*` が必要） | false |
@@ -413,7 +413,7 @@ Swagger UI なら右上の **Authorize** にトークンを貼れば全エンド
 
 | id | 実装 | 有効化 |
 |---|---|---|
-| `stripe` | Stripe Checkout（ホスト型・テストモード） | `STRIPE_SECRET_KEY` |
+| `stripe` | Stripe Checkout（ホスト型・テストモード。決済ページのメール欄には、ご注文のメールアドレスを入れて開きます） | `STRIPE_SECRET_KEY` |
 | `bank_transfer` | 銀行振込。**外部APIもWebhookも持たない**手段が同じ契約に収まることの実証 | `BANK_TRANSFER_ENABLED=true` |
 
 有効な手段は `GET /api/payments/config` に現れ、ストアフロントのボタンもその一覧から生成されるため、**実装を1つ足してもフロント／コアのコードは変更不要**です。
