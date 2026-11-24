@@ -332,3 +332,6 @@ main { max-width: 1140px; margin: 0 auto; padding: 22px 20px 80px; }
 .brand-preview { margin: 8px 0; padding: 12px; background: #fff;
     border: 1px solid var(--line); border-radius: 10px; display: inline-block; }
 .brand-preview img { display: block; height: 44px; width: auto; max-width: 320px; }
+/* お振込の案内の窓（どの画面の大きさでも必ず目に入る） */
+.bank-dialog { max-width: min(560px, 92vw); max-height: 85vh; overflow: auto; border: none; border-radius: 12px; padding: 20px; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
+.bank-dialog::backdrop { background: rgba(0,0,0,.4); }

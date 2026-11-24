@@ -1746,6 +1746,24 @@ function showBankInstructions(anchor, ins) {
     host.querySelectorAll(".bank-instructions").forEach((e) => e.remove());
     host.insertAdjacentHTML("beforeend", html);
     host.classList.remove("hidden");
+    // 押した場所の下に足すだけだと、画面の外やヘッダーの裏に出て「何も起きない」ように見える。
+    // 必ず目に入るよう、同じ案内を画面の中央の窓でも出す（閉じても上の案内は残る）
+    openBankDialog(html);
+}
+
+function openBankDialog(html) {
+    let dlg = document.getElementById("bankDialog");
+    if (!dlg) {
+        dlg = document.createElement("dialog");
+        dlg.id = "bankDialog";
+        dlg.className = "bank-dialog";
+        document.body.appendChild(dlg);
+        dlg.addEventListener("click", (e) => {
+            if (e.target === dlg || e.target.closest("[data-close-bank]")) dlg.close();
+        });
+    }
+    dlg.innerHTML = `${html}<div style="text-align:right;margin-top:12px"><button type="button" class="btn" data-close-bank>閉じる</button></div>`;
+    if (typeof dlg.showModal === "function") { if (!dlg.open) dlg.showModal(); } else { dlg.setAttribute("open", ""); }
 }
 
 async function showBankInstructionsFor(orderId, token, btn) {
