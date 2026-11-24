@@ -1679,7 +1679,10 @@ function payButtonsHtml(orderId, token, transfer = false) {
     const showBank = transfer && state.paymentProviders.some((p) => p.id === "bank_transfer")
         ? `<button class="btn show-bank-btn" data-order="${orderId}"${tokenAttr} style="margin-left:8px">振込先を表示</button>` : "";
     const cancel = `<button class="btn ghost cancel-btn" data-order="${orderId}"${tokenAttr} style="margin-left:8px">取り消す</button>`;
-    return pay + showBank + cancel;
+    // テストモードのカード決済は、公開のテスト用カード番号だけが通る。外から試す方が手元のカードで止まらないよう添える
+    const cardNote = state.paymentTestMode && state.paymentProviders.some((p) => p.id === "stripe")
+        ? `<div class="hint pay-note">デモ（テストモード）です。カードは 4242 4242 4242 4242（有効期限は未来の日付・セキュリティコードは任意の 3 桁）をお使いください。実際の請求はありません。</div>` : "";
+    return pay + showBank + cancel + cardNote;
 }
 
 /* ---------- お客さまの取り消し ----------
@@ -2150,6 +2153,7 @@ async function init() {
         const cfg = await api("/api/payments/config");
         state.paymentsEnabled = cfg.enabled;
         state.paymentProviders = cfg.providers || [];
+        state.paymentTestMode = cfg.mode === "test";
         if (!cfg.enabled) {
             $("#banner").textContent = "🧪 デモモード: 決済手段が未設定のためスキップされます（注文までは動作します）。";
             $("#banner").classList.remove("hidden");
