@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.example.ecapi.domain.CartItem;
 import com.example.ecapi.domain.Category;
+import com.example.ecapi.domain.Coupon;
+import com.example.ecapi.domain.DiscountType;
 import com.example.ecapi.domain.Order;
 import com.example.ecapi.domain.OrderStatus;
 import com.example.ecapi.domain.Product;
@@ -19,9 +21,13 @@ import com.example.ecapi.event.OrderExpiredEvent;
 import com.example.ecapi.event.OrderPaidEvent;
 import com.example.ecapi.event.OrderPlacedEvent;
 import com.example.ecapi.exception.BadRequestException;
+import com.example.ecapi.exception.ConflictException;
 import com.example.ecapi.exception.NotFoundException;
 import com.example.ecapi.repository.CartItemRepository;
+import com.example.ecapi.payment.MinorUnits;
+import com.example.ecapi.payment.PaymentCallback;
 import com.example.ecapi.repository.CategoryRepository;
+import com.example.ecapi.repository.CouponRepository;
 import com.example.ecapi.repository.OrderRepository;
 import com.example.ecapi.repository.ProductRepository;
 import com.example.ecapi.repository.TaxRateRepository;
@@ -32,7 +38,14 @@ import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -43,6 +56,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 注文の在庫ライフサイクル（引当 → 確定 or 解放）の回帰テスト。
@@ -77,6 +92,8 @@ class OrderPaymentLifecycleTest {
     @Autowired UserRepository userRepository;
     @Autowired TaxRateRepository taxRateRepository;
     @Autowired RecordingOrderEventListener recorder;
+    @Autowired CouponRepository couponRepository;
+    @Autowired PlatformTransactionManager txManager;
 
     private User buyer;
     private Product matcha;   // 1,620円 / 軽減8% / 在庫10
@@ -86,6 +103,7 @@ class OrderPaymentLifecycleTest {
     void reset() {
         cartItemRepository.deleteAll();
         orderRepository.deleteAll();
+        couponRepository.deleteAll();
         productRepository.deleteAll();
         categoryRepository.deleteAll();
         userRepository.deleteAll();
@@ -457,6 +475,204 @@ class OrderPaymentLifecycleTest {
         assertThat(reserved(matcha)).isZero();   // 引当は解放済み
     }
 
+    // --- お客さまの取り消し ---------------------------------------------
+
+    @Test
+    @DisplayName("customerCancelReleasesHoldAndCoupon: 取り消すと引当とクーポンが戻り、取り消しのイベントが 1 件")
+    void customerCancelReleasesHoldAndCoupon() {
+        try {
+            checkCancelReleasesHoldAndCoupon();
+        } finally {
+            couponRepository.deleteAll();   // 共有の H2 にクーポンを残さない
+        }
+    }
+
+    private void checkCancelReleasesHoldAndCoupon() {
+        save(coupon("SAVE500", DiscountType.FIXED, "500"));
+        Order guest = orderService.guestCheckout("g@example.com", Map.of(matcha.getId(), 2), "SAVE500");
+        assertThat(reserved(matcha)).isEqualTo(2);
+        assertThat(reload("SAVE500").getRedeemedCount()).isEqualTo(1);
+        recorder.clear();
+
+        Order cancelled = orderService.cancelByGuest(guest.getId(), guest.getOrderToken());
+
+        assertThat(cancelled.getStatus()).isEqualTo(OrderStatus.CANCELLED);
+        assertThat(status(guest)).isEqualTo(OrderStatus.CANCELLED);
+        assertThat(reserved(matcha)).isZero();
+        assertThat(stock(matcha)).isEqualTo(10);
+        assertThat(reload("SAVE500").getRedeemedCount()).isZero();
+        assertThat(recorder.cancelledEvents()).hasSize(1);
+
+        // 会員の注文も同じ
+        addToCart(matcha, 1);
+        Order mine = orderService.checkout(buyer);
+        assertThat(reserved(matcha)).isEqualTo(1);
+        orderService.cancelByMember(buyer, mine.getId());
+        assertThat(status(mine)).isEqualTo(OrderStatus.CANCELLED);
+        assertThat(reserved(matcha)).isZero();
+        assertThat(recorder.cancelledEvents()).hasSize(2);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = OrderStatus.class, names = {"PAID", "SHIPPED", "DELIVERED", "CANCELLED", "EXPIRED"})
+    @DisplayName("customerCannotCancelNonPending: お支払い待ち以外は取り消せない（409）。状態・在庫・引当は変わらない")
+    void customerCannotCancelNonPending(OrderStatus status) {
+        Order order = orderService.guestCheckout("g@example.com", Map.of(matcha.getId(), 1));
+        Order stored = orderRepository.findById(order.getId()).orElseThrow();
+        stored.setStatus(status);
+        orderRepository.save(stored);
+        int stockBefore = stock(matcha);
+        int reservedBefore = reserved(matcha);
+
+        assertThatThrownBy(() -> orderService.cancelByGuest(order.getId(), order.getOrderToken()))
+                .isInstanceOf(ConflictException.class);
+
+        assertThat(status(order)).isEqualTo(status);
+        assertThat(stock(matcha)).isEqualTo(stockBefore);
+        assertThat(reserved(matcha)).isEqualTo(reservedBefore);
+    }
+
+    @Test
+    @DisplayName("customerCannotCancelOthersOrder: 他人の注文・誤ったトークンは 404、トークンが無ければ 400。何も変わらない")
+    void customerCannotCancelOthersOrder() {
+        addToCart(matcha, 1);
+        Order mine = orderService.checkout(buyer);
+        User other = new User();
+        other.setEmail("other@example.com");
+        other.setPassword("x");
+        other.setName("Other");
+        other.setRole(Role.USER);
+        User savedOther = userRepository.save(other);
+        Order guest = orderService.guestCheckout("g@example.com", Map.of(matcha.getId(), 1));
+        int reservedBefore = reserved(matcha);
+
+        assertThatThrownBy(() -> orderService.cancelByMember(savedOther, mine.getId()))
+                .isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> orderService.cancelByGuest(guest.getId(), "wrong-token"))
+                .isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> orderService.cancelByGuest(guest.getId(), " "))
+                .isInstanceOf(BadRequestException.class);
+
+        assertThat(status(mine)).isEqualTo(OrderStatus.PENDING);
+        assertThat(status(guest)).isEqualTo(OrderStatus.PENDING);
+        assertThat(reserved(matcha)).isEqualTo(reservedBefore);
+    }
+
+    @Test
+    @DisplayName("paymentAfterCustomerCancelIsFlaggedNotApplied: 取り消した後の入金は、状態を変えず要返金確認になる")
+    void paymentAfterCustomerCancelIsFlaggedNotApplied() {
+        Order order = orderService.guestCheckout("g@example.com", Map.of(matcha.getId(), 1));
+        orderService.cancelByGuest(order.getId(), order.getOrderToken());
+        recorder.clear();
+
+        orderService.confirmPayment(new PaymentCallback(order.getId(), "cs_test_late",
+                MinorUnits.of(order.getTotalAmount(), "jpy"), "jpy", true, "evt_late"), "stripe", "jpy");
+
+        assertThat(status(order)).isEqualTo(OrderStatus.CANCELLED);
+        assertThat(stock(matcha)).isEqualTo(10);
+        assertThat(reserved(matcha)).isZero();
+        assertThat(recorder.paidEvents()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("cancelAndPaymentDoNotBothApply: 取り消しと入金が重なっても、どちらか一方だけが効く")
+    void cancelAndPaymentDoNotBothApply() throws Exception {
+        Order order = orderService.guestCheckout("g@example.com", Map.of(matcha.getId(), 1));
+        PaymentCallback callback = new PaymentCallback(order.getId(), "cs_test_race",
+                MinorUnits.of(order.getTotalAmount(), "jpy"), "jpy", true, "evt_race");
+        CountDownLatch locked = new CountDownLatch(1);
+
+        runTogether(
+                () -> holdingLockThen(locked, () -> orderService.cancelByGuest(order.getId(), order.getOrderToken())),
+                () -> {
+                    locked.await();
+                    orderService.confirmPayment(callback, "stripe", "jpy");
+                    return null;
+                });
+
+        OrderStatus finalStatus = status(order);
+        assertThat(finalStatus).isIn(OrderStatus.CANCELLED, OrderStatus.PAID);
+        assertThat(reserved(matcha)).isZero();
+        assertThat(stock(matcha)).isEqualTo(finalStatus == OrderStatus.PAID ? 9 : 10);
+    }
+
+    @Test
+    @DisplayName("cancelAndExpiryDoNotBothRelease: 取り消しと期限切れの掃除が重なっても、引当は 1 回だけ戻る")
+    void cancelAndExpiryDoNotBothRelease() throws Exception {
+        Order x = orderService.guestCheckout("g@example.com", Map.of(matcha.getId(), 1));
+        Thread.sleep(10);
+        Instant t = Instant.now();
+        Thread.sleep(10);
+        Order y = orderService.guestCheckout("g@example.com", Map.of(matcha.getId(), 1));
+        assertThat(reserved(matcha)).isEqualTo(2);
+        CountDownLatch locked = new CountDownLatch(1);
+
+        runTogether(
+                () -> holdingLockThen(locked, () -> orderService.cancelByGuest(x.getId(), x.getOrderToken())),
+                () -> {
+                    locked.await();
+                    orderService.expireStalePendingOrders(t);   // t より前に作られた x だけが対象
+                    return null;
+                });
+
+        assertThat(status(x)).isEqualTo(OrderStatus.CANCELLED);   // 期限切れで上書きされない
+        assertThat(status(y)).isEqualTo(OrderStatus.PENDING);
+        assertThat(reserved(matcha)).isEqualTo(1);                // y の 1 点が残る（2 回解放されて 0 にならない）
+    }
+
+    @Test
+    @DisplayName("adminCancelAndCustomerCancelDoNotBothRelease: お客さまの取り消しと管理画面の取り消しが重なっても、引当は 1 回だけ戻る")
+    void adminCancelAndCustomerCancelDoNotBothRelease() throws Exception {
+        Order x = orderService.guestCheckout("g@example.com", Map.of(matcha.getId(), 1));
+        Order y = orderService.guestCheckout("g@example.com", Map.of(matcha.getId(), 1));
+        recorder.clear();
+        CountDownLatch locked = new CountDownLatch(1);
+
+        runTogether(
+                () -> holdingLockThen(locked, () -> orderService.cancelByGuest(x.getId(), x.getOrderToken())),
+                () -> {
+                    locked.await();
+                    orderService.updateStatus(x.getId(), OrderStatus.CANCELLED);
+                    return null;
+                });
+
+        assertThat(status(x)).isEqualTo(OrderStatus.CANCELLED);
+        assertThat(status(y)).isEqualTo(OrderStatus.PENDING);
+        assertThat(reserved(matcha)).isEqualTo(1);
+        assertThat(recorder.cancelledEvents()).hasSize(1);
+    }
+
+    /** 取り消しのトランザクションがロックを取った後、300 ミリ秒そのまま持ち続けてからコミットする。 */
+    private Object holdingLockThen(CountDownLatch locked, Runnable cancel) {
+        return new TransactionTemplate(txManager).execute(s -> {
+            cancel.run();
+            locked.countDown();
+            try {
+                Thread.sleep(300);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return null;
+        });
+    }
+
+    /** 2 つの処理を別のスレッドで同時に走らせ、10 秒で打ち切る。 */
+    @SafeVarargs
+    private static void runTogether(Callable<Object>... jobs) throws Exception {
+        ExecutorService pool = Executors.newFixedThreadPool(jobs.length);
+        try {
+            List<Future<Object>> futures = new ArrayList<>();
+            for (Callable<Object> job : jobs) {
+                futures.add(pool.submit(job));
+            }
+            for (Future<Object> f : futures) {
+                f.get(10, TimeUnit.SECONDS);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
     // --- helpers --------------------------------------------------------------
 
     private void addToCart(Product product, int quantity) {
@@ -484,6 +700,22 @@ class OrderPaymentLifecycleTest {
         r.setRatePercent(new BigDecimal(percent));
         r.setEffectiveFrom(LocalDate.of(2019, 10, 1));
         return r;
+    }
+
+    private Coupon save(Coupon coupon) {
+        return couponRepository.save(coupon);
+    }
+
+    private Coupon reload(String code) {
+        return couponRepository.findByCode(code).orElseThrow();
+    }
+
+    private static Coupon coupon(String code, DiscountType type, String value) {
+        Coupon coupon = new Coupon();
+        coupon.setCode(code);
+        coupon.setDiscountType(type);
+        coupon.setValue(new BigDecimal(value));
+        return coupon;
     }
 
     private Product reload(Product p) {

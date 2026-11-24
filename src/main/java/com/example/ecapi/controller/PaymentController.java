@@ -2,6 +2,8 @@ package com.example.ecapi.controller;
 
 import com.example.ecapi.dto.PaymentDtos.CheckoutSessionResponse;
 import com.example.ecapi.dto.PaymentDtos.PaymentConfigResponse;
+import com.example.ecapi.payment.PaymentInstructions;
+import com.example.ecapi.security.ClientKey;
 import com.example.ecapi.security.CurrentUserProvider;
 import com.example.ecapi.service.PaymentService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -55,8 +57,10 @@ public class PaymentController {
             description = "redirectUrl を開くと支払いに進む。provider 省略時は既定の決済手段。")
     @PostMapping("/orders/{orderId}/checkout-session")
     public CheckoutSessionResponse createSession(@PathVariable Long orderId,
-                                                 @RequestParam(required = false) String provider) {
-        return paymentService.createCheckoutSession(currentUserProvider.require(), orderId, provider);
+                                                 @RequestParam(required = false) String provider,
+                                                 HttpServletRequest request) {
+        return paymentService.createCheckoutSession(currentUserProvider.require(), orderId, provider,
+                ClientKey.of(request));
     }
 
     @Operation(summary = "ゲスト注文の支払いを開始する",
@@ -64,8 +68,9 @@ public class PaymentController {
     @PostMapping("/guest/orders/{orderId}/checkout-session")
     public CheckoutSessionResponse createGuestSession(@PathVariable Long orderId,
                                                       @RequestParam String token,
-                                                      @RequestParam(required = false) String provider) {
-        return paymentService.createGuestCheckoutSession(orderId, token, provider);
+                                                      @RequestParam(required = false) String provider,
+                                                      HttpServletRequest request) {
+        return paymentService.createGuestCheckoutSession(orderId, token, provider, ClientKey.of(request));
     }
 
     /**
@@ -81,10 +86,10 @@ public class PaymentController {
         return ResponseEntity.ok("ok");
     }
 
-    @Operation(summary = "外部決済ページを持たない手段の案内ページ（銀行振込の振込先など）",
-            description = "会員はログイン、ゲストは token が必要。")
-    @GetMapping(value = "/{providerId}/instructions", produces = MediaType.TEXT_HTML_VALUE)
-    public String instructions(@PathVariable String providerId,
+    @Operation(summary = "外部決済ページを持たない手段の案内（銀行振込の振込先など。JSON）",
+            description = "会員はログイン、ゲストは token が必要。その手段を選んだお支払い待ちの注文だけ。")
+    @GetMapping(value = "/{providerId}/instructions", produces = MediaType.APPLICATION_JSON_VALUE)
+    public PaymentInstructions instructions(@PathVariable String providerId,
                                @RequestParam Long orderId,
                                @RequestParam(required = false) String token) {
         return paymentService.instructions(providerId, orderId, token,

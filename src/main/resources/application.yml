@@ -89,6 +89,9 @@ app:
     # A checkout reserves (holds) stock. If unpaid within this window, a background
     # sweep expires the order and releases the hold back to sellable stock.
     hold-minutes: ${APP_ORDER_HOLD_MINUTES:30}
+    # 銀行振込を選んだ注文の取り置き期限（日）。注文の作成時刻から数える。カードの hold-minutes とは別。
+    # 14 日: 本番で連絡先を伏せる 30 日・行ごと消す 30 日より短く、匿名の取り置きが在庫を握る時間を短く保つ。
+    bank-transfer-hold-days: ${APP_ORDER_BANK_TRANSFER_HOLD_DAYS:14}
     expiry-sweep-ms: ${APP_ORDER_EXPIRY_SWEEP_MS:60000}
     # 1回の注文が握れる量の上限。引当には**支払いが要らない**ので、これが無いと
     # 誰でも無料で棚を空にできる（公開カタログが available を正確に返すため数も分かる）。
@@ -149,6 +152,15 @@ app:
       enabled: ${BANK_TRANSFER_ENABLED:false}
       account-info: ${BANK_TRANSFER_ACCOUNT:〇〇銀行 〇〇支店 普通 1234567 カ）サンプルストア}
       note-days: ${BANK_TRANSFER_NOTE_DAYS:3}
+      # 案内の注記の最後に出す固定文。本番のデモでは「入金の確認は行いません・口座は架空」と書く。空なら出さない。
+      notice: ${BANK_TRANSFER_NOTICE:}
+      # 長い取り置きの抑え。商品ごとの上限: 1 商品の在庫のうち、振込の取り置きが占めてよい割合（%）。
+      # 在庫が少ない商品でも、振込の取り置きの合計が 1 点以下なら通す。
+      max-hold-percent: ${BANK_TRANSFER_MAX_HOLD_PERCENT:20}
+      # 会員の件数: 会員 1 人あたりの、未払いの振込の注文の件数（ゲストには掛けない）。
+      max-pending-per-member: ${BANK_TRANSFER_MAX_PENDING_PER_MEMBER:1}
+      # 送信元の回数: 同じ送信元が振込を選べる回数（24 時間）。メモリ上の数で、再起動で 0 に戻る。
+      max-per-source: ${BANK_TRANSFER_MAX_PER_SOURCE:3}
   stripe:
     # TEST MODE ONLY. Leave blank to disable payments (app still boots).
     # Set sk_test_... and whsec_... in production env (never commit real keys).

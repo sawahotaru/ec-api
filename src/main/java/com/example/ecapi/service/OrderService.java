@@ -14,8 +14,11 @@ import com.example.ecapi.event.OrderPlacedEvent;
 import com.example.ecapi.exception.BadRequestException;
 import com.example.ecapi.exception.ConflictException;
 import com.example.ecapi.exception.NotFoundException;
+import com.example.ecapi.payment.ExpireResult;
 import com.example.ecapi.payment.MinorUnits;
 import com.example.ecapi.payment.PaymentCallback;
+import com.example.ecapi.payment.PaymentProvider;
+import com.example.ecapi.payment.PaymentProviderRegistry;
 import com.example.ecapi.pricing.OrderPricer;
 import com.example.ecapi.pricing.OrderPricing;
 import com.example.ecapi.pricing.PricedLine;
@@ -36,6 +39,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 public class OrderService {
@@ -50,6 +55,7 @@ public class OrderService {
     private final OrderPricer orderPricer;
     private final CheckoutLimits limits;
     private final ApplicationEventPublisher events;
+    private final PaymentProviderRegistry registry;
 
     public OrderService(OrderRepository orderRepository,
                         CartItemRepository cartItemRepository,
@@ -58,8 +64,10 @@ public class OrderService {
                         CouponService couponService,
                         OrderPricer orderPricer,
                         CheckoutLimits limits,
-                        ApplicationEventPublisher events) {
+                        ApplicationEventPublisher events,
+                        PaymentProviderRegistry registry) {
         this.limits = limits;
+        this.registry = registry;
         this.orderRepository = orderRepository;
         this.cartItemRepository = cartItemRepository;
         this.productRepository = productRepository;
@@ -230,20 +238,51 @@ public class OrderService {
     }
 
     /**
-     * Expires PENDING orders created before {@code cutoff}: releases each order's held
-     * stock and marks it EXPIRED. Runs in one transaction; release is DB-guarded so it
-     * stays correct even if two sweeps overlap. Returns the number of orders expired.
+     * 決済手段を区別せず、{@code cutoff} より前に作られた PENDING を全部期限切れにする
+     * （{@link #expireStalePendingOrders(java.time.Instant, java.time.Instant)} の両方に同じ時刻を渡す）。
      */
     @Transactional
     public int expireStalePendingOrders(java.time.Instant cutoff) {
-        List<Order> stale = orderRepository.findByStatusAndCreatedAtBefore(OrderStatus.PENDING, cutoff);
+        return expireStalePendingOrders(cutoff, cutoff);
+    }
+
+    /**
+     * Expires stale PENDING orders: releases each order's held stock and marks it EXPIRED.
+     * 銀行振込を選んだ注文は {@code bankCutoff}、それ以外は {@code cardCutoff} より前に作られたものだけ。
+     * Runs in one transaction; release is DB-guarded so it stays correct even if two sweeps overlap.
+     * 引当の解放は商品 id の順に、同じ商品の数量を足してから 1 回で行う（振込の取り置きの数え方 商品ごとの上限 が
+     * 商品の行を id の順にロックするので、逆の順で触ってデッドロックしないようにする）。
+     * Returns the number of orders expired.
+     */
+    @Transactional
+    public int expireStalePendingOrders(java.time.Instant cardCutoff, java.time.Instant bankCutoff) {
+        List<Order> stale = orderRepository.findStalePending(cardCutoff, bankCutoff);
+        List<Order> toClose = new java.util.ArrayList<>();
+        Map<Long, Integer> release = new TreeMap<>();
+        int expired = 0;
         for (Order order : stale) {
-            releaseHeldItems(order);
+            // ロック待ちの間に、お客さまの取り消し・入金の確定・管理画面の変更が済んでいることがある。
+            // PENDING でなくなっていたら触らない（引当を 2 回戻さない・状態を上書きしない）。
+            if (order.getStatus() != OrderStatus.PENDING) {
+                continue;
+            }
+            expired++;
+            for (OrderItem item : order.getItems()) {
+                release.merge(item.getProduct().getId(), item.getQuantity(), Integer::sum);
+            }
             couponService.release(order.getCouponCode());
             order.setStatus(OrderStatus.EXPIRED);
             events.publishEvent(OrderExpiredEvent.of(order));
+            if (order.getPaymentProvider() != null) {
+                toClose.add(paymentProbe(order));
+            }
         }
-        return stale.size();
+        release.forEach(productRepository::releaseStock);
+        // 決済側の開いている支払いの失効は、コミットの後に 1 件ずつ（多数の注文の行を持ったまま外部を呼ばない）。
+        if (!toClose.isEmpty()) {
+            afterCommit(() -> toClose.forEach(this::expireAfterClose));
+        }
+        return expired;
     }
 
     /**
@@ -317,23 +356,32 @@ public class OrderService {
      */
     @Transactional
     public Order updateStatus(Long orderId, OrderStatus status) {
-        Order order = get(orderId);
+        // トランザクションの最初の読み込みを行ロック付きにする（Webhook・掃除と順番に処理される）
+        Order order = orderRepository.findWithLockById(orderId)
+                .orElseThrow(() -> new NotFoundException("Order not found: " + orderId));
         OrderStatus previous = order.getStatus();
         if (previous == status) {
             return order;
         }
         switch (status) {
-            case PAID -> applyPaid(order, null, null);
+            case PAID -> {
+                applyPaid(order, null, null);
+                if (order.getStatus() == OrderStatus.PAID && previous != OrderStatus.PAID) {
+                    // ほかの手段（振込の入金確認）で払われた。開いたままの決済ページを、コミットの後に失効させる
+                    Order probe = paymentProbe(order);
+                    afterCommit(() -> expireAfterPaid(probe));
+                }
+            }
             case CANCELLED -> {
                 // 未払い注文のキャンセルは引当を戻す。PAID 済みは既に実在庫が減っているので
                 // ここで戻すと在庫を二重に増やしてしまう。クーポンの引き換え数も同じ理屈で、
                 // 売上にならなかった注文の分だけ戻す（期限切れ済みは既に戻っている）。
                 if (previous == OrderStatus.PENDING) {
-                    releaseHeldItems(order);
-                    couponService.release(order.getCouponCode());
+                    cancelPending(order);
+                } else {
+                    order.setStatus(OrderStatus.CANCELLED);
+                    events.publishEvent(OrderCancelledEvent.of(order, previous.name()));
                 }
-                order.setStatus(OrderStatus.CANCELLED);
-                events.publishEvent(OrderCancelledEvent.of(order, previous.name()));
             }
             default -> order.setStatus(status);
         }
@@ -341,13 +389,59 @@ public class OrderService {
     }
 
     /**
+     * お支払い待ちの注文の取り消し（管理画面とお客さまで同じ部品）。決済側の開いている支払いを先に閉じ
+     * （閉じられない・もう払われているときは取り消さない）、引当とクーポンを戻して CANCELLED にする。
+     * 呼び出し側が行ロックを取っていること。
+     */
+    private void cancelPending(Order order) {
+        requireOpenPaymentClosed(order);
+        releaseHeldItems(order);
+        couponService.release(order.getCouponCode());
+        order.setStatus(OrderStatus.CANCELLED);
+        events.publishEvent(OrderCancelledEvent.of(order, OrderStatus.PENDING.name()));
+    }
+
+    /**
+     * 会員が自分のお支払い待ちの注文を取り消す。本人確認と行ロックを 1 本のクエリで行い
+     * （トランザクションの最初の読み込み）、他人の注文・無い注文は 404、PENDING 以外は 409。
+     */
+    @Transactional
+    public Order cancelByMember(User user, Long orderId) {
+        Order order = orderRepository.findLockedByIdAndUserId(orderId, user.getId())
+                .orElseThrow(() -> new NotFoundException("Order not found: " + orderId));
+        return cancelByCustomer(order);
+    }
+
+    /** ゲストが注文トークンで、自分のお支払い待ちの注文を取り消す。トークンが空なら 400、違えば 404。 */
+    @Transactional
+    public Order cancelByGuest(Long orderId, String token) {
+        if (token == null || token.isBlank()) {
+            throw new BadRequestException("Order token is required");
+        }
+        Order order = orderRepository.findLockedByIdAndOrderToken(orderId, token)
+                .orElseThrow(() -> new NotFoundException("Order not found: " + orderId));
+        return cancelByCustomer(order);
+    }
+
+    private Order cancelByCustomer(Order order) {
+        if (order.getStatus() != OrderStatus.PENDING) {
+            throw new ConflictException("このご注文は取り消せません");
+        }
+        cancelPending(order);
+        Order saved = orderRepository.save(order);
+        log.info("Order {} cancelled by customer", saved.getId());
+        return saved;
+    }
+
+    /**
      * 決済側の通知を注文と照合してから確定する（Webhook の入口）。
      * 未入金・通貨違い・金額違いは PAID にせず、warn を残して終わる（応答は 200）。
      * 照合は注文の状態に関係なく先に行う。金額は補助単位の整数で比べる。
+     * 注文は行ロック付きで読む（取り消し・掃除・管理画面の変更と順番に処理される）。
      */
     @Transactional
     public void confirmPayment(PaymentCallback callback, String providerId, String storeCurrency) {
-        Order order = orderRepository.findById(callback.orderId()).orElse(null);
+        Order order = orderRepository.findWithLockById(callback.orderId()).orElse(null);
         if (order == null) {
             log.warn("Payment callback referenced unknown order {}", callback.orderId());
             return;
@@ -448,6 +542,79 @@ public class OrderService {
         }
         if (reference != null) {
             order.setPaymentReference(reference);
+        }
+    }
+
+    /** 取り消しの前に決済側の開いている支払いを閉じる。閉じられない・払われているなら取り消さない（409）。 */
+    private void requireOpenPaymentClosed(Order order) {
+        PaymentProvider provider = registry.find(order.getPaymentProvider()).orElse(null);
+        if (provider == null) {
+            return;
+        }
+        ExpireResult result = provider.expireOpenPayment(order);
+        if (result == ExpireResult.ALREADY_COMPLETED) {
+            throw new ConflictException("お支払いが完了しています。確認が済むまでお待ちください");
+        }
+        if (result == ExpireResult.FAILED) {
+            throw new ConflictException("取り消しできませんでした。時間をおいてお試しください");
+        }
+    }
+
+    /** コミットの後に行う。トランザクションの外から呼ばれたときはその場で行う。 */
+    private void afterCommit(Runnable action) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    action.run();
+                }
+            });
+        } else {
+            action.run();
+        }
+    }
+
+    /** 失効の呼び出しに渡す、注文の ID・決済手段・参照だけを持つ控え（永続化しない）。 */
+    private static Order paymentProbe(Order order) {
+        Order probe = new Order();
+        probe.setId(order.getId());
+        probe.setPaymentProvider(order.getPaymentProvider());
+        probe.setPaymentReference(order.getPaymentReference());
+        return probe;
+    }
+
+    /** 期限切れにした注文の決済ページを失効させる。失敗しても期限切れのまま（警告だけ残す）。 */
+    private void expireAfterClose(Order probe) {
+        try {
+            PaymentProvider provider = registry.find(probe.getPaymentProvider()).orElse(null);
+            if (provider == null) {
+                return;
+            }
+            if (provider.expireOpenPayment(probe) == ExpireResult.FAILED) {
+                log.warn("PAYMENT_EXPIRE_FAILED order={} session={}", probe.getId(), probe.getPaymentReference());
+            }
+        } catch (RuntimeException e) {
+            log.warn("PAYMENT_EXPIRE_FAILED order={} session={} type={}", probe.getId(),
+                    probe.getPaymentReference(), e.getClass().getSimpleName());
+        }
+    }
+
+    /** ほかの手段で PAID になった注文の決済ページを失効させる。PAID は戻さない。 */
+    private void expireAfterPaid(Order probe) {
+        try {
+            PaymentProvider provider = registry.find(probe.getPaymentProvider()).orElse(null);
+            if (provider == null) {
+                return;
+            }
+            ExpireResult result = provider.expireOpenPayment(probe);
+            if (result == ExpireResult.ALREADY_COMPLETED) {
+                log.warn("PAYMENT_PAID_TWICE order={} session={}", probe.getId(), probe.getPaymentReference());
+            } else if (result == ExpireResult.FAILED) {
+                log.warn("PAYMENT_EXPIRE_FAILED order={} session={}", probe.getId(), probe.getPaymentReference());
+            }
+        } catch (RuntimeException e) {
+            log.warn("PAYMENT_EXPIRE_FAILED order={} session={} type={}", probe.getId(),
+                    probe.getPaymentReference(), e.getClass().getSimpleName());
         }
     }
 

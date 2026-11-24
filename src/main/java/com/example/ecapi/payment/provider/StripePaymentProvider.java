@@ -6,6 +6,7 @@ import com.example.ecapi.domain.OrderItem;
 import com.example.ecapi.exception.BadRequestException;
 import com.example.ecapi.exception.PaymentCallbackUnreadableException;
 import com.example.ecapi.payment.CheckoutSession;
+import com.example.ecapi.payment.ExpireResult;
 import com.example.ecapi.payment.MinorUnits;
 import com.example.ecapi.payment.PaymentCallback;
 import com.example.ecapi.payment.PaymentProperties;
@@ -45,7 +46,11 @@ public class StripePaymentProvider implements PaymentProvider {
     static final int MAX_CUSTOMER_EMAIL_LENGTH = 800;
 
     /** 支払い開始に失敗したときの固定文（設定の不足・Stripe のエラーを外に区別させない）。 */
-    static final String START_FAILED = "決済を開始できませんでした。時間をおいてお試しください。";
+    public static final String START_FAILED = "決済を開始できませんでした。時間をおいてお試しください。";
+    /** 失効の呼び出しの時間切れ（ミリ秒）。外部が遅いときに DB の接続を長く持たないため短くする。 */
+    static final int EXPIRE_TIMEOUT_MILLIS = 5000;
+    /** Checkout Session の ID の接頭辞。これで始まらない参照は、決済ページを持たない。 */
+    static final String SESSION_REF_PREFIX = "cs_";
     /** Webhook の要求を受け付けなかったときの固定文（署名の無し・不正を区別させない）。 */
     static final String REQUEST_FAILED = "要求を処理できませんでした";
 
@@ -104,6 +109,65 @@ public class StripePaymentProvider implements PaymentProvider {
         } catch (StripeException e) {
             throw clientError(e, order.getId());
         }
+    }
+
+    /**
+     * 開いている決済ページ（Checkout Session）を失効させる。決済側の状態を {@code open} から
+     * {@code expired} に変えるだけで、セッションの記録は消さない。
+     *
+     * <p>確かめる順序: 参照の形（{@code cs_} で始まらない・空なら何も開いていない）→ キー
+     * （無効なら分からない）→ 失効の呼び出し（短い時間切れ）。失敗したときはセッションの状態を
+     * 取得して判定する。例外の文言・キーはログに出さない。
+     */
+    @Override
+    public ExpireResult expireOpenPayment(Order order) {
+        String ref = order.getPaymentReference();
+        if (ref == null || !ref.startsWith(SESSION_REF_PREFIX)) {
+            return ExpireResult.NOTHING_OPEN;
+        }
+        if (!isEnabled()) {
+            return logExpire(order, ref, ExpireResult.FAILED, "KeyUnavailable");
+        }
+        RequestOptions options = RequestOptions.builder()
+                .setApiKey(props.getSecretKey())
+                .setConnectTimeout(EXPIRE_TIMEOUT_MILLIS)
+                .setReadTimeout(EXPIRE_TIMEOUT_MILLIS)
+                .build();
+        try {
+            Session session = new Session();
+            session.setId(ref);
+            session.expire(options);
+            return logExpire(order, ref, ExpireResult.EXPIRED, null);
+        } catch (StripeException expireError) {
+            try {
+                ExpireResult result = fromSessionStatus(Session.retrieve(ref, options).getStatus());
+                return logExpire(order, ref, result, result == ExpireResult.FAILED
+                        ? expireError.getClass().getSimpleName() : null);
+            } catch (StripeException retrieveError) {
+                return logExpire(order, ref, ExpireResult.FAILED, retrieveError.getClass().getSimpleName());
+            }
+        }
+    }
+
+    /** セッションの状態（{@code open}・{@code complete}・{@code expired}）から失効の結果へ。 */
+    static ExpireResult fromSessionStatus(String status) {
+        if ("complete".equals(status)) {
+            return ExpireResult.ALREADY_COMPLETED;
+        }
+        if ("expired".equals(status)) {
+            return ExpireResult.EXPIRED;
+        }
+        return ExpireResult.FAILED;
+    }
+
+    private static ExpireResult logExpire(Order order, String ref, ExpireResult result, String errorType) {
+        if (result == ExpireResult.FAILED) {
+            log.warn("PAYMENT_EXPIRE_RESULT order={} session={} result={} type={}",
+                    order.getId(), ref, result, errorType);
+        } else {
+            log.info("PAYMENT_EXPIRE_RESULT order={} session={} result={}", order.getId(), ref, result);
+        }
+        return result;
     }
 
     /**

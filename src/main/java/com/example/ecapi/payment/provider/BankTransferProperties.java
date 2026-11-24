@@ -16,6 +16,50 @@ public class BankTransferProperties {
     /** 入金確認までの目安（案内文に埋め込む）。 */
     private String noteDays = "3";
 
+    /** 案内の注記の最後に出す固定文（空なら出さない）。 */
+    private String notice = "";
+
+    /** 商品ごとの上限: 1 商品の在庫のうち、振込の取り置きが占めてよい割合（%）。 */
+    private int maxHoldPercent = 20;
+
+    /** 会員の件数: 会員 1 人あたりの、未払いの振込の注文の件数。 */
+    private int maxPendingPerMember = 1;
+
+    /** 送信元の回数: 同じ送信元が振込を選べる回数（24 時間）。 */
+    private int maxPerSource = 3;
+
+    public String getNotice() {
+        return notice;
+    }
+
+    public void setNotice(String notice) {
+        this.notice = notice;
+    }
+
+    public int getMaxHoldPercent() {
+        return maxHoldPercent;
+    }
+
+    public void setMaxHoldPercent(int maxHoldPercent) {
+        this.maxHoldPercent = maxHoldPercent;
+    }
+
+    public int getMaxPendingPerMember() {
+        return maxPendingPerMember;
+    }
+
+    public void setMaxPendingPerMember(int maxPendingPerMember) {
+        this.maxPendingPerMember = maxPendingPerMember;
+    }
+
+    public int getMaxPerSource() {
+        return maxPerSource;
+    }
+
+    public void setMaxPerSource(int maxPerSource) {
+        this.maxPerSource = maxPerSource;
+    }
+
     public boolean isEnabled() {
         return enabled;
     }

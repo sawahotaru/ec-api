@@ -85,6 +85,23 @@ public class OrderController {
         return ResponseEntity.ok(withDeadline(order, OrderResponse.from(order)));
     }
 
+    @Operation(summary = "Cancel one of my unpaid (PENDING) orders",
+            description = "取り消すと確保していた在庫とクーポンを戻す。お支払い待ち以外は 409。応答に連絡先は載らない。")
+    @PostMapping("/{id}/cancel")
+    public ResponseEntity<OrderResponse> cancelMyOrder(@PathVariable Long id) {
+        Order order = orderService.cancelByMember(currentUserProvider.require(), id);
+        return ResponseEntity.ok(withDeadline(order, OrderResponse.from(order).withoutContact()));
+    }
+
+    @Operation(summary = "Cancel an unpaid guest order by id + token (no account)",
+            description = "取り消すと確保していた在庫とクーポンを戻す。お支払い待ち以外は 409。応答に連絡先・トークンは載らない。")
+    @PostMapping("/guest/{id}/cancel")
+    public ResponseEntity<OrderResponse> cancelGuestOrder(@PathVariable Long id,
+                                                          @RequestParam(required = false) String token) {
+        Order order = orderService.cancelByGuest(id, token);
+        return ResponseEntity.ok(withDeadline(order, OrderResponse.from(order).withoutContact()));
+    }
+
     @Operation(summary = "List my orders (paginated)")
     @GetMapping
     public Page<OrderResponse> myOrders(@PageableDefault(size = 10, sort = "createdAt") Pageable pageable) {

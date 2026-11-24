@@ -1,5 +1,6 @@
 package com.example.ecapi.dto;
 
+import com.example.ecapi.payment.PaymentInstructions;
 import java.util.List;
 
 public final class PaymentDtos {
@@ -13,9 +14,12 @@ public final class PaymentDtos {
      *
      * @param providerId 実際に使われた決済手段の id
      * @param reference  決済側の参照ID（Stripe の Session id、振込の照合番号）
+     * @param instructions 外部の決済ページを持たない手段（銀行振込）の案内。ストアの画面がその場に出す。
+     *                   決済ページへ移る手段（カード）は null
      */
     public record CheckoutSessionResponse(Long orderId, String providerId,
-                                          String reference, String redirectUrl) {
+                                          String reference, String redirectUrl,
+                                          PaymentInstructions instructions) {
     }
 
     /** 購入画面に出す決済手段の選択肢。 */

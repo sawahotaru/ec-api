@@ -6,6 +6,7 @@ import com.example.ecapi.stats.StatsDtos.CouponUsage;
 import com.example.ecapi.stats.StatsDtos.ProductSales;
 import com.example.ecapi.stats.StatsDtos.ProviderSales;
 import com.example.ecapi.stats.StatsDtos.StatusBreakdown;
+import jakarta.persistence.LockModeType;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -13,6 +14,8 @@ import java.util.Optional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -26,6 +29,66 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     /** Orders in a given status placed before a cut-off — used to expire stale holds. */
     List<Order> findByStatusAndCreatedAtBefore(OrderStatus status, Instant cutoff);
+
+    /**
+     * 行ロック付きで読む（{@code SELECT … FOR UPDATE}）。<strong>トランザクションの最初の読み込み</strong>として
+     * 呼ぶこと（先に同じ注文を普通に読むと、永続化コンテキストの古い値が返りうる）。
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select o from Order o where o.id = :id")
+    Optional<Order> findWithLockById(@Param("id") Long id);
+
+    /**
+     * 支払いの開始で決済手段と参照を書く。<strong>PENDING で、参照が読んだときのまま</strong>のときだけ
+     * 書く条件付きの更新（読んだ実体を書き戻さない＝取り消し・期限切れ・入金を PENDING で上書きしない）。
+     *
+     * @param previousReference 読んだときの参照。無ければ空文字
+     * @return 1 なら書いた。0 なら、その間に状態か参照が変わった
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("update Order o set o.paymentProvider = :provider, o.paymentReference = :reference "
+            + "where o.id = :id and o.status = com.example.ecapi.domain.OrderStatus.PENDING "
+            + "and coalesce(o.paymentReference, '') = :previousReference")
+    int updatePaymentIfPending(@Param("id") Long id, @Param("provider") String provider,
+                               @Param("reference") String reference,
+                               @Param("previousReference") String previousReference);
+
+    /**
+     * 本人確認とロックを 1 本のクエリで行う（会員）。<strong>トランザクションの最初の読み込み</strong>として呼ぶこと。
+     * 他人の注文・無い注文は空になる。
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select o from Order o where o.id = :id and o.user.id = :userId")
+    Optional<Order> findLockedByIdAndUserId(@Param("id") Long id, @Param("userId") Long userId);
+
+    /** 本人確認とロックを 1 本のクエリで行う（ゲスト。注文トークンが一致するときだけ）。 */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select o from Order o where o.id = :id and o.orderToken = :token")
+    Optional<Order> findLockedByIdAndOrderToken(@Param("id") Long id, @Param("token") String token);
+
+    /**
+     * 期限を過ぎた PENDING（行ロック付き。取り消し・入金の確定と順番に処理される）。
+     * 銀行振込を選んだ注文は {@code bankCutoff}、それ以外（カード・未選択）は
+     * {@code cardCutoff} より前に作られたものだけ。ロック待ちの後に状態が変わっていることがあるので、
+     * 呼び出し側は状態を見直す。
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select o from Order o where o.status = com.example.ecapi.domain.OrderStatus.PENDING and ("
+            + "(o.paymentProvider = 'bank_transfer' and o.createdAt < :bankCutoff) "
+            + "or ((o.paymentProvider is null or o.paymentProvider <> 'bank_transfer') and o.createdAt < :cardCutoff))")
+    List<Order> findStalePending(@Param("cardCutoff") Instant cardCutoff,
+                                 @Param("bankCutoff") Instant bankCutoff);
+
+    /** 会員の、振込を選んだ未払いの注文の件数（{@code exceptOrderId} の注文は数えない）。 */
+    long countByUserIdAndStatusAndPaymentProviderAndIdNot(Long userId, OrderStatus status,
+                                                          String paymentProvider, Long exceptOrderId);
+
+    /** 振込を選んだ未払いの注文が、その商品を取り置いている数量の合計（{@code exceptOrderId} の注文は除く）。 */
+    @Query("select coalesce(sum(i.quantity), 0) from OrderItem i "
+            + "where i.product.id = :productId and i.order.id <> :exceptOrderId "
+            + "and i.order.status = com.example.ecapi.domain.OrderStatus.PENDING "
+            + "and i.order.paymentProvider = 'bank_transfer'")
+    long sumBankTransferHeld(@Param("productId") Long productId, @Param("exceptOrderId") Long exceptOrderId);
 
     /** ゲストの連絡先がまだ残っている古い注文 — 保持期間を過ぎたら伏せる（公開デモ向け）。 */
     List<Order> findByGuestEmailIsNotNullAndCreatedAtBefore(Instant cutoff);

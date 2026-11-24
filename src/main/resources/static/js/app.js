@@ -1144,7 +1144,7 @@ function guestOrderCardHtml(order, token, done = false) {
     const pay = order.status === "PENDING"
         ? (confirming
             ? '<p class="hint" style="text-align:left">決済の確認を待っています。少し待ってから再読み込みしてください。</p>'
-            : pendingNoticeHtml(order) + payButtonsHtml(order.id, token))
+            : pendingNoticeHtml(order) + payButtonsHtml(order.id, token, order.transferInstructions))
         : "";
     const note = order.status === "EXPIRED"
         ? '<p class="hint" style="text-align:left">お支払い期限が過ぎたため、確保していた在庫は解放されました。お手数ですが再度ご注文ください。</p>'
@@ -1605,7 +1605,7 @@ function renderOrders(orders, doneId = null) {
         const payBtn = o.status === "PENDING"
             ? (o.id === doneId
                 ? '<p class="hint" style="text-align:left">決済の確認を待っています。</p>'
-                : pendingNoticeHtml(o) + payButtonsHtml(o.id, null))
+                : pendingNoticeHtml(o) + payButtonsHtml(o.id, null, o.transferInstructions))
             : "";
         return `
         <div class="order-block">
@@ -1658,7 +1658,7 @@ function showOrderResult(order) {
         </div>`;
     }
     if (state.paymentsEnabled && order.status === "PENDING") {
-        html += " " + payButtonsHtml(order.id, order.guest && order.orderToken ? order.orderToken : null);
+        html += " " + payButtonsHtml(order.id, order.guest && order.orderToken ? order.orderToken : null, order.transferInstructions);
     } else if (!state.paymentsEnabled) {
         html += " （決済手段が未設定のためスキップ）";
     }
@@ -1669,12 +1669,117 @@ function showOrderResult(order) {
 
 // 決済手段のボタンはサーバーが返す一覧から組み立てる。手段を1つ足しても
 // （PaymentProvider の実装を追加しても）このコードは変更不要。
-function payButtonsHtml(orderId, token) {
+function payButtonsHtml(orderId, token, transfer = false) {
     if (!state.paymentsEnabled) return "";
     const tokenAttr = token ? ` data-token="${escapeHtml(token)}"` : "";
-    return state.paymentProviders.map((p) =>
+    const pay = state.paymentProviders.map((p) =>
         `<button class="btn pay-btn" data-order="${orderId}" data-provider="${escapeHtml(p.id)}"${tokenAttr} style="margin-left:8px">${escapeHtml(p.displayName)}で支払う</button>`
     ).join("");
+    // お振込を選んだ注文（応答の transferInstructions）にだけ、振込先をあとからも見られるボタンを出す
+    const showBank = transfer && state.paymentProviders.some((p) => p.id === "bank_transfer")
+        ? `<button class="btn show-bank-btn" data-order="${orderId}"${tokenAttr} style="margin-left:8px">振込先を表示</button>` : "";
+    const cancel = `<button class="btn ghost cancel-btn" data-order="${orderId}"${tokenAttr} style="margin-left:8px">取り消す</button>`;
+    return pay + showBank + cancel;
+}
+
+/* ---------- お客さまの取り消し ----------
+   取り消すと確保していた在庫を戻し、注文の中身はカートに戻す（応答にはメールもトークンも入らない）。 */
+async function returnItemsToCart(order) {
+    const items = (order.items || []).filter((i) => i.productId != null && i.quantity > 0);
+    if (!isLoggedIn()) {
+        const cart = guestCart();
+        for (const i of items) {
+            const existing = cart.find((c) => c.productId === i.productId);
+            if (existing) { existing.quantity += i.quantity; continue; }
+            const p = state.productsById[i.productId];
+            cart.push({
+                productId: i.productId, quantity: i.quantity, name: i.productName, price: i.unitPrice,
+                imageUrl: p ? p.imageUrl : undefined, taxCategory: i.taxCategory || "STANDARD",
+            });
+        }
+        saveGuestCart(cart);
+    } else {
+        for (const i of items) {
+            try { await api("/api/cart/items", { method: "POST", auth: true, body: { productId: i.productId, quantity: i.quantity } }); }
+            catch { /* 在庫に収まらない品目は戻さない */ }
+        }
+    }
+    await refreshCart();
+}
+
+async function cancelOrder(orderId, token) {
+    if (!window.confirm(`ご注文 #${orderId} を取り消しますか？\n確保していた在庫は解放され、ご注文の中身はカートに戻ります。`)) return;
+    try {
+        const path = token
+            ? `/api/orders/guest/${orderId}/cancel?token=${encodeURIComponent(token)}`
+            : `/api/orders/${orderId}/cancel`;
+        const order = await api(path, { method: "POST", auth: !token });
+        state.pending = null;   // 控えを捨てる
+        if (token) markGuestOrder(orderId, { settled: true });
+        try { await returnItemsToCart(order); } catch { /* カートに戻せなくても取り消しは済んでいる */ }
+        toast(`ご注文 #${orderId} を取り消しました`);
+        // いま開いている画面を作り直す（状態が「キャンセル」に変わる）
+        const banner = $("#banner");
+        if (banner && banner.textContent.includes(`注文 #${orderId} を受け付けました`)) banner.classList.add("hidden");
+        if (!$("#ordersDrawer").classList.contains("hidden")) openOrders();
+        if (!$("#guestOrders").classList.contains("hidden")) showGuestOrders(orderId, token);
+        updatePendingFlag({ force: true });
+        updateCartPending();
+    } catch (ex) { toast(ex.message); }
+}
+
+// お振込の案内（サーバーが返した値）。すべて escapeHtml を通して出す。
+function bankInstructionsHtml(ins) {
+    const rows = (ins.rows || []).map((r) =>
+        `<div class="lmeta"><strong>${escapeHtml(r.label)}</strong>　${escapeHtml(r.value)}</div>`).join("");
+    const notes = (ins.notes || []).map((n) => `<p class="hint" style="text-align:left">${escapeHtml(n)}</p>`).join("");
+    return `<div class="bank-instructions hint pending-note" style="text-align:left"><strong>${escapeHtml(ins.title || "")}</strong>${rows}${notes}</div>`;
+}
+
+// 案内を、押したボタンのある場所（注文完了のバナー・照会・履歴のその注文）の中に出す。移動しない。
+function showBankInstructions(anchor, ins) {
+    const html = bankInstructionsHtml(ins);
+    const host = anchor && anchor.isConnected ? anchor.parentElement : $("#banner");
+    host.querySelectorAll(".bank-instructions").forEach((e) => e.remove());
+    host.insertAdjacentHTML("beforeend", html);
+    host.classList.remove("hidden");
+}
+
+async function showBankInstructionsFor(orderId, token, btn) {
+    try {
+        const path = `/api/payments/bank_transfer/instructions?orderId=${orderId}`
+            + (token ? `&token=${encodeURIComponent(token)}` : "");
+        showBankInstructions(btn, await api(path, { auth: !token }));
+    } catch (ex) {
+        // 404 は「この注文は振込を選んでいない」。ログインの切れ・通信の失敗は別の文言にする
+        toast(ex && ex.status === 404
+            ? "この注文はお振込を選んでいません"
+            : "振込先を表示できませんでした。時間をおいてもう一度お試しください");
+    }
+}
+
+// 振込を選んだ直後に、同じ画面のその注文を取り直して描き直す（取り置きの期限が旧い 30 分のまま残らない）。
+// 描き直したあと、新しい画面の中に案内を出す。
+async function refreshAfterBankChoice(orderId, token, btn, instructions) {
+    const banner = $("#banner");
+    const inBanner = !!(btn && btn.isConnected && btn.closest("#banner"));
+    let anchor = btn;
+    try {
+        if (inBanner) {
+            const order = await api(token
+                ? `/api/orders/guest/${orderId}?token=${encodeURIComponent(token)}`
+                : `/api/orders/${orderId}`, { auth: !token });
+            const note = banner.querySelector(".pending-note");
+            if (note) note.outerHTML = pendingNoticeHtml(order);
+        } else if (!$("#ordersDrawer").classList.contains("hidden")) {
+            await openOrders();
+            anchor = document.querySelector(`#ordersBody .show-bank-btn[data-order="${orderId}"]`);
+        } else if (!$("#guestOrders").classList.contains("hidden")) {
+            await showGuestOrders(orderId, token);
+            anchor = document.querySelector(`#guestOrders .show-bank-btn[data-order="${orderId}"]`);
+        }
+    } catch { /* 描き直せなくても、案内は出す */ }
+    showBankInstructions(anchor || btn, instructions);
 }
 
 /* ---------- お支払い待ちの案内 ---------- */
@@ -1736,7 +1841,7 @@ async function findPendingOrders({ force = false, firstOnly = false } = {}) {
             const page = await api("/api/orders?size=20&sort=createdAt,desc", { auth: true });
             for (const o of page.content || []) {
                 noteOrderStatus(o.id, o.status);
-                if (o.status === "PENDING") list.push({ id: o.id, totalAmount: o.totalAmount, payBy: o.payBy, token: null });
+                if (o.status === "PENDING") list.push({ id: o.id, totalAmount: o.totalAmount, payBy: o.payBy, token: null, transfer: !!o.transferInstructions });
             }
         } else {
             const now = Date.now();
@@ -1748,7 +1853,7 @@ async function findPendingOrders({ force = false, firstOnly = false } = {}) {
                     const o = await api(`/api/orders/guest/${rec.id}?token=${encodeURIComponent(rec.token)}`);
                     noteOrderStatus(o.id, o.status);
                     if (o.status === "PENDING") {
-                        list.push({ id: o.id, totalAmount: o.totalAmount, payBy: o.payBy, token: rec.token });
+                        list.push({ id: o.id, totalAmount: o.totalAmount, payBy: o.payBy, token: rec.token, transfer: !!o.transferInstructions });
                         if (firstOnly && o.id !== state.pendingExcludeId) { complete = false; break; }
                     } else {
                         markGuestOrder(rec.id, { settled: true });
@@ -1793,7 +1898,7 @@ async function updateCartPending() {
     box.innerHTML = others.map((o) => `
         <div class="hint pending-note" style="text-align:left">
             <strong>お支払いがまだのご注文があります</strong>（#${o.id}${o.payBy ? "・" + escapeHtml(formatPayBy(o.payBy)) + "まで" : ""}）
-            ${payButtonsHtml(o.id, o.token)}
+            ${payButtonsHtml(o.id, o.token, o.transfer)}
         </div>`).join("");
     box.classList.remove("hidden");
 }
@@ -1808,9 +1913,9 @@ async function confirmNewOrder() {
 }
 
 // token present → guest order (public endpoint); absent → the logged-in user's order.
-async function startPayment(orderId, token, providerId) {
+async function startPayment(orderId, token, providerId, btn = null) {
     try {
-        toast("支払い画面へ移動します…");
+        toast("お支払いの手続きを開始します…");
         const base = token
             ? `/api/payments/guest/orders/${orderId}/checkout-session?token=${encodeURIComponent(token)}`
             : `/api/payments/orders/${orderId}/checkout-session`;
@@ -1819,6 +1924,12 @@ async function startPayment(orderId, token, providerId) {
             : base;
         const res = await api(path, { method: "POST", auth: !token });
         state.pending = null;   // 支払いを始めたので、控えを捨てる
+        if (res.instructions) {
+            // お振込など、決済ページを持たない手段: 移動せず、その場に案内を出す
+            await refreshAfterBankChoice(orderId, token, btn, res.instructions);
+            updatePendingFlag({ force: true });
+            return;
+        }
         window.location.href = res.redirectUrl;
     } catch (ex) { toast(ex.message); }
 }
@@ -1957,7 +2068,13 @@ function bind() {
         if (add) { addToCart(Number(add.dataset.id)); return; }
 
         const pay = e.target.closest(".pay-btn");
-        if (pay) { startPayment(Number(pay.dataset.order), pay.dataset.token || null, pay.dataset.provider || null); return; }
+        if (pay) { startPayment(Number(pay.dataset.order), pay.dataset.token || null, pay.dataset.provider || null, pay); return; }
+
+        const cancelBtn = e.target.closest(".cancel-btn");
+        if (cancelBtn) { cancelOrder(Number(cancelBtn.dataset.order), cancelBtn.dataset.token || null); return; }
+
+        const showBank = e.target.closest(".show-bank-btn");
+        if (showBank) { showBankInstructionsFor(Number(showBank.dataset.order), showBank.dataset.token || null, showBank); return; }
 
         // Admin panel actions (the panel is re-rendered, so delegate rather than bind).
         const act = e.target.closest("[data-act]");

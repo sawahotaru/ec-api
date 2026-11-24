@@ -85,7 +85,9 @@ public final class OrderDtos {
             String orderToken,
             // 支払いの期限（取り置きの期限）。PENDING の注文だけ値を持つ。注文の応答に載せるときは
             // withPayBy で足す（管理画面の応答などでは null のまま）。
-            Instant payBy) {
+            Instant payBy,
+            // 振込を選んだお支払い待ちの注文なら true（画面が「振込先を表示」を出す）。決済手段の名前は出さない。
+            boolean transferInstructions) {
 
         public static OrderResponse from(Order order) {
             return build(order, false);
@@ -101,14 +103,24 @@ public final class OrderDtos {
         public OrderResponse masked() {
             return new OrderResponse(id, ContactMask.mask(userEmail), guest, status,
                     subtotalAmount, discountAmount, shippingAmount, taxAmount, totalAmount,
-                    couponCode, pricingMode, items, createdAt, orderToken, payBy);
+                    couponCode, pricingMode, items, createdAt, orderToken, payBy, transferInstructions);
+        }
+
+        /**
+         * 連絡先（メール）を抜いた複製。書き込みの応答（お客さまの取り消し）に連絡先を載せないために使う。
+         * トークンは元から入っていない（{@link #from}）。
+         */
+        public OrderResponse withoutContact() {
+            return new OrderResponse(id, null, guest, status,
+                    subtotalAmount, discountAmount, shippingAmount, taxAmount, totalAmount,
+                    couponCode, pricingMode, items, createdAt, orderToken, payBy, transferInstructions);
         }
 
         /** 支払い期限を足した複製。 */
         public OrderResponse withPayBy(Instant deadline) {
             return new OrderResponse(id, userEmail, guest, status,
                     subtotalAmount, discountAmount, shippingAmount, taxAmount, totalAmount,
-                    couponCode, pricingMode, items, createdAt, orderToken, deadline);
+                    couponCode, pricingMode, items, createdAt, orderToken, deadline, transferInstructions);
         }
 
         /** Includes the one-time orderToken — use only in the immediate guest-checkout reply. */
@@ -136,7 +148,9 @@ public final class OrderDtos {
                     items,
                     order.getCreatedAt(),
                     includeToken ? order.getOrderToken() : null,
-                    null);
+                    null,
+                    order.getStatus() == OrderStatus.PENDING
+                            && "bank_transfer".equals(order.getPaymentProvider()));
         }
     }
 

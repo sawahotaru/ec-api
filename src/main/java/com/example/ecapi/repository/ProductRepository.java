@@ -1,9 +1,13 @@
 package com.example.ecapi.repository;
 
 import com.example.ecapi.domain.Product;
+import jakarta.persistence.LockModeType;
+import java.util.Collection;
+import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -69,6 +73,18 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     @Query("UPDATE Product p SET p.reserved = p.reserved - :qty "
             + "WHERE p.id = :id AND p.reserved >= :qty")
     int releaseStock(@Param("id") Long id, @Param("qty") int qty);
+
+    /**
+     * 商品の行を <strong>id の順に</strong>ロックする（{@code SELECT … FOR UPDATE}）。振込の取り置きの数え方
+     * （商品ごとの上限）が同時に走っても上限を超えないようにするため。ロックを取る順を固定してデッドロックを避ける。
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select p from Product p where p.id in :ids order by p.id")
+    List<Product> lockByIdInOrderById(@Param("ids") Collection<Long> ids);
+
+    /** 在庫数を DB から読む（永続化コンテキストの古い値を使わない）。 */
+    @Query("select p.stock from Product p where p.id = :id")
+    Integer findStockById(@Param("id") Long id);
 
     boolean existsByCategoryId(Long categoryId);
 }

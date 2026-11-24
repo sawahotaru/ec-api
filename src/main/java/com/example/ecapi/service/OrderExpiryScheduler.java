@@ -24,22 +24,29 @@ public class OrderExpiryScheduler {
 
     private final OrderService orderService;
     private final long holdMinutes;
+    private final long bankTransferHoldDays;
     private final int purgeAfterDays;
 
     public OrderExpiryScheduler(OrderService orderService,
                                 @Value("${app.order.hold-minutes:30}") long holdMinutes,
+                                @Value("${app.order.bank-transfer-hold-days:14}") long bankTransferHoldDays,
                                 @Value("${app.order.purge-abandoned-days:30}") int purgeAfterDays) {
         this.orderService = orderService;
         this.holdMinutes = holdMinutes;
+        this.bankTransferHoldDays = bankTransferHoldDays;
         this.purgeAfterDays = purgeAfterDays;
     }
 
-    /** Runs every minute; expires PENDING orders older than the hold window. */
+    /**
+     * Runs every minute; expires PENDING orders older than the hold window
+     * （カードは保留の分数、銀行振込を選んだ注文は振込の日数）。
+     */
     @Scheduled(fixedDelayString = "${app.order.expiry-sweep-ms:60000}",
             initialDelayString = "${app.order.expiry-sweep-ms:60000}")
     public void expireStaleOrders() {
-        Instant cutoff = Instant.now().minus(Duration.ofMinutes(holdMinutes));
-        int expired = orderService.expireStalePendingOrders(cutoff);
+        Instant now = Instant.now();
+        int expired = orderService.expireStalePendingOrders(
+                now.minus(Duration.ofMinutes(holdMinutes)), now.minus(Duration.ofDays(bankTransferHoldDays)));
         if (expired > 0) {
             log.info("Expired {} unpaid order(s) older than {} min; released their held stock",
                     expired, holdMinutes);

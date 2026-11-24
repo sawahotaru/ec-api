@@ -73,15 +73,24 @@ public interface PaymentProvider {
     }
 
     /**
-     * 外部の決済ページを持たない手段（銀行振込・代金引換）が、自前の案内ページ本文を返す。
-     * 返した場合は {@code GET /api/payments/{id}/instructions?orderId=...} で配信される。
+     * 外部の決済ページを持たない手段（銀行振込・代金引換）が、ストアの画面に出す案内を返す。
+     * 返した場合は支払い開始の応答に載り、{@code GET /api/payments/{id}/instructions} でも JSON で返る。
+     * HTML は組み立てない（画面が値をエスケープして表示する）。
      *
-     * <p>これを任意メソッドにしてあるのは、「外部にリダイレクトする決済」と「案内を出して
-     * 待つ決済」という<em>形の違う2種類</em>を、契約を分岐させずに1本で扱うため。
-     *
-     * @return HTML本文。案内ページを持たないなら {@link Optional#empty()}
+     * @return 案内。持たない手段（外部の決済ページへ移るもの）は {@link Optional#empty()}
      */
-    default Optional<String> instructionsHtml(Order order) {
+    default Optional<PaymentInstructions> instructions(Order order) {
         return Optional.empty();
+    }
+
+    /**
+     * 注文に紐づく、決済手段の側で開いている支払い（決済ページなど）を失効させる。
+     * 変えるのは決済側の<strong>状態だけ</strong>で、決済側の記録は消さない（削除の操作は持たない）。
+     *
+     * <p>既定は {@link ExpireResult#NOTHING_OPEN}（外部に開いている支払いを持たない手段＝銀行振込）。
+     * 実装は例外を投げず、分からないときは {@link ExpireResult#FAILED} を返すこと。
+     */
+    default ExpireResult expireOpenPayment(Order order) {
+        return ExpireResult.NOTHING_OPEN;
     }
 }

@@ -2,9 +2,14 @@ package com.example.ecapi.payment.provider;
 
 import com.example.ecapi.domain.Order;
 import com.example.ecapi.payment.CheckoutSession;
+import com.example.ecapi.payment.PaymentInstructions;
+import com.example.ecapi.payment.PaymentInstructions.Row;
 import com.example.ecapi.payment.PaymentProvider;
-import java.nio.charset.StandardCharsets;
-import java.net.URLEncoder;
+import com.example.ecapi.service.PaymentDeadlines;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
 
@@ -23,20 +28,26 @@ import org.springframework.stereotype.Component;
 @Component
 public class BankTransferPaymentProvider implements PaymentProvider {
 
+    private static final DateTimeFormatter DEADLINE_FORMAT =
+            DateTimeFormatter.ofPattern("yyyy年M月d日 H時mm分").withZone(ZoneId.of("Asia/Tokyo"));
+
     private final BankTransferProperties props;
+    private final PaymentDeadlines deadlines;
     private final String contextPath;
 
     public BankTransferPaymentProvider(
             BankTransferProperties props,
+            PaymentDeadlines deadlines,
             @org.springframework.beans.factory.annotation.Value("${server.servlet.context-path:}") String contextPath) {
         this.props = props;
-        // 本番は lab.4510.be/ec/ 配下に載るので、案内ページのURLは context-path を含める。
+        this.deadlines = deadlines;
+        // 本番は lab.4510.be/ec/ 配下に載るので、ストアのトップの URL は context-path を含める。
         this.contextPath = contextPath;
     }
 
     @Override
     public String id() {
-        return "bank_transfer";
+        return PaymentDeadlines.BANK_TRANSFER;
     }
 
     @Override
@@ -52,45 +63,30 @@ public class BankTransferPaymentProvider implements PaymentProvider {
     @Override
     public CheckoutSession createSession(Order order) {
         // 振込人名義に添えてもらう照合番号。注文IDから決まるので、入金明細と突き合わせできる。
-        String reference = "BT-%06d".formatted(order.getId());
-        StringBuilder url = new StringBuilder(
-                contextPath + "/api/payments/" + id() + "/instructions?orderId=" + order.getId());
-        if (order.getOrderToken() != null) {
-            // ゲスト注文はログインが無いので、案内ページの閲覧権限をトークンで担保する。
-            url.append("&token=").append(URLEncoder.encode(order.getOrderToken(), StandardCharsets.UTF_8));
-        }
-        return new CheckoutSession(reference, url.toString());
+        // 案内はストアの画面がその場に出す（応答の instructions）。redirectUrl はストアのトップ
+        // （案内を知らない旧い画面が移動しても、トップに戻るだけ）。
+        return new CheckoutSession(reference(order), contextPath + "/");
     }
 
     @Override
-    public Optional<String> instructionsHtml(Order order) {
-        String reference = "BT-%06d".formatted(order.getId());
-        return Optional.of("""
-                <!doctype html><meta charset="utf-8">
-                <title>お振込のご案内</title>
-                <h1>お振込のご案内</h1>
-                <p>下記口座へお振込ください。入金確認後（最短%s営業日）に発送手配へ進みます。</p>
-                <table border="1" cellpadding="8" style="border-collapse:collapse">
-                  <tr><th align="left">注文番号</th><td>%d</td></tr>
-                  <tr><th align="left">お振込金額</th><td>%s 円（税込）</td></tr>
-                  <tr><th align="left">お振込先</th><td>%s</td></tr>
-                  <tr><th align="left">照合番号</th><td><b>%s</b></td></tr>
-                </table>
-                <p>お振込人名義の先頭に照合番号 <b>%s</b> をご記入いただくと確認がスムーズです。</p>
-                """.formatted(
-                escape(props.getNoteDays()),
-                order.getId(),
-                order.getTotalAmount().stripTrailingZeros().toPlainString(),
-                escape(props.getAccountInfo()),
-                reference,
-                reference));
+    public Optional<PaymentInstructions> instructions(Order order) {
+        String reference = reference(order);
+        List<Row> rows = List.of(
+                new Row("注文番号", String.valueOf(order.getId())),
+                new Row("お振込金額（税込）", order.getTotalAmount().stripTrailingZeros().toPlainString() + " 円"),
+                new Row("お振込先", props.getAccountInfo() == null ? "" : props.getAccountInfo()),
+                new Row("照合番号", reference),
+                new Row("お支払い期限", DEADLINE_FORMAT.format(deadlines.bankTransferDeadline(order))));
+        List<String> notes = new ArrayList<>();
+        notes.add("入金確認後（最短" + props.getNoteDays() + "営業日）に発送手配へ進みます。");
+        notes.add("お振込人名義の先頭に照合番号 " + reference + " をご記入ください。");
+        if (props.getNotice() != null && !props.getNotice().isBlank()) {
+            notes.add(props.getNotice());
+        }
+        return Optional.of(new PaymentInstructions("お振込のご案内", rows, notes));
     }
 
-    /** 口座情報は設定由来（管理者が入力する）ので、案内ページに出す前にエスケープする。 */
-    private String escape(String value) {
-        return value == null ? "" : value
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;");
+    private static String reference(Order order) {
+        return "BT-%06d".formatted(order.getId());
     }
 }
